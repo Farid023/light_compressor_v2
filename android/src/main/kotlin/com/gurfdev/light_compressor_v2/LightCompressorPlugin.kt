@@ -1,4 +1,4 @@
-package com.abedelazizshe.light_compressor
+package com.gurfdev.light_compressor_v2
 
 import android.Manifest
 import android.app.Activity

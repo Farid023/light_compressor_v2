@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
-import 'package:light_compressor/light_compressor.dart';
+import 'package:light_compressor_v2/light_compressor_v2.dart';
 
 /// The allowed video quality to pass for compression
 enum VideoQuality {

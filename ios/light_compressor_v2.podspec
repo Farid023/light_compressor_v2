@@ -3,7 +3,7 @@
 # Run `pod lib lint light_compressor.podspec' to validate before publishing.
 #
 Pod::Spec.new do |s|
-  s.name             = 'light_compressor'
+  s.name             = 'light_compressor_v2'
   s.version          = '1.0.0'
   s.summary          = 'Light Compressor Library'
   s.description      = <<-DESC

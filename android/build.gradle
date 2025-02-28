@@ -1,16 +1,15 @@
-group 'com.abedelazizshe.light_compressor'
-version '1.0-SNAPSHOT'
+group 'com.gurfdev.light_compressor_v2'
+version '1.0'
 
 buildscript {
-//    ext.kotlin_version = '1.8.21'
-    ext.kotlin_version = '1.9.0'
+    ext.kotlin_version = '1.8.21'
     repositories {
         google()
         mavenCentral()
     }
 
     dependencies {
-        classpath 'com.android.tools.build:gradle:4.2.2'
+        classpath 'com.android.tools.build:gradle:7.4.0'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
     }
 }
@@ -26,7 +25,7 @@ apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 
 android {
-    namespace "com.abedelazizshe.light_compressor"
+    namespace "com.gurfdev.light_compressor_v2"
     compileSdkVersion 33
 
     compileOptions {
