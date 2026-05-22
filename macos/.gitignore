@@ -33,5 +33,8 @@ xcuserdata
 Icon?
 .tags*
 
+.build/
+.swiftpm/
+
 /Flutter/Generated.xcconfig
 /Flutter/flutter_export_environment.sh
