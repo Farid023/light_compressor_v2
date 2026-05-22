@@ -1,3 +1,11 @@
+
+# 1.0.1
+
+- Added Swift Package Manager (SPM) support.
+- Updated example project and video player.
+- Optimized codebase and improved performance.
+- Fixed minor issues.
+
 # 1.0.0 (Fork)
 
 - Forked from the original `light_compressor` package.
