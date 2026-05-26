@@ -210,7 +210,7 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Opens the file picker, starts video compression, and updates
   /// the UI based on the result.
   Future<void> _pickVideo() async {
-    final result = await FilePicker.pickFiles(type: FileType.video);
+    final result = await FilePicker.platform.pickFiles(type: FileType.video);
     final file = result?.files.first;
     if (file == null) return;
 

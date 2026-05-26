@@ -39,7 +39,8 @@ dependencies:
   light_compressor_v2:
     path: ../
   video_player: ^2.11.1
-  file_picker: ^11.0.2
+#  file_picker: ^11.0.2
+  file_picker: ^10.3.10
 
 
 dev_dependencies:
