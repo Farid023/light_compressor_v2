@@ -1,0 +1,8 @@
+# Demo media — not needed by package consumers
+pictures/
+
+# Build artifacts
+example/android/build/
+example/ios/build/
+example/macos/build/
+build/
