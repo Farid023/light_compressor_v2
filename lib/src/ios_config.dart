@@ -1,7 +1,13 @@
-/// iOS specific configurations.
+/// iOS and macOS specific configurations for saving the compressed video.
 class IOSConfig {
+  /// Creates a new [IOSConfig] instance.
+  ///
+  /// By default, [saveInGallery] is `true`.
   IOSConfig({this.saveInGallery = true});
 
-  /// To decide saving the video in gallery or not. This defaults to `true`.
+  /// Whether to save the compressed video directly to the device's photo library (Gallery).
+  ///
+  /// If `true`, you must add `NSPhotoLibraryUsageDescription` to your `Info.plist`.
+  /// Defaults to `true`.
   final bool saveInGallery;
 }
