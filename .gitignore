@@ -1,2 +1,8 @@
 .idea/
-.dart_tool
+.dart_tool/
+.build/
+.swiftpm/
+.ruby-lsp/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies

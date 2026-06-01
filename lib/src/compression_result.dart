@@ -1,28 +1,29 @@
+/// Base class for video compression results.
 abstract class Result {}
 
-/// Compression is completed successfully state.
+/// Represents a successful video compression.
 class OnSuccess implements Result {
-  /// OnSuccess state.
+  /// Creates an [OnSuccess] result.
   const OnSuccess(this.destinationPath);
 
-  /// The path of the compressed video.
+  /// The absolute path to the successfully compressed video file.
   final String destinationPath;
 }
 
-/// Compression failed state.
+/// Represents a failed video compression attempt.
 class OnFailure implements Result {
-  /// OnFailure state.
+  /// Creates an [OnFailure] result with a description of the error.
   const OnFailure(this.message);
 
-  /// Failure message.
+  /// Description of the error that caused the compression to fail.
   final String message;
 }
 
-/// Compression was cancelled state.
+/// Represents a cancelled video compression operation.
 class OnCancelled implements Result {
-  /// OnCancelled state.
+  /// Creates an [OnCancelled] result.
   const OnCancelled({required this.isCancelled});
 
-  /// Determines whether the cancellation is done or not.
+  /// Indicates if the compression operation was successfully cancelled.
   final bool isCancelled;
 }
