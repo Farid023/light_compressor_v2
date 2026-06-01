@@ -34,8 +34,8 @@ Extreme high bitrates are reduced while maintaining good video quality, resultin
 
 ## 📸 Demo
 
-<p align="center">
-  <img src="pictures/android.gif" alt="Demo GIF" width="300" />
+<p align="left">
+  <img src="pictures/demo.gif" alt="Demo GIF" width="300" />
 </p>
 
 ---
