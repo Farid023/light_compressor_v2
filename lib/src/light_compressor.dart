@@ -4,27 +4,29 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:light_compressor_v2/light_compressor_v2.dart';
 
-/// The allowed video quality to pass for compression
+/// Video quality presets to determine the target bitrate for compression.
 enum VideoQuality {
-  /// Very low quality
+  /// Very low quality. Results in the smallest file size but lowest detail.
   very_low,
 
-  /// Low quality
+  /// Low quality. Good for high compression with moderate detail loss.
   low,
 
-  /// Medium quality
+  /// Medium quality. Balanced setting for size reduction and good video quality.
   medium,
 
-  /// High quality
+  /// High quality. Retains high levels of detail with moderate file size reduction.
   high,
 
-  /// Very high quality
+  /// Very high quality. Focuses on maximum quality preservation with minor file size reduction.
   very_high,
 }
 
-/// Light compressor that perform video compression and cancel compression
+/// A lightweight, easy-to-use video compressor for Flutter.
+///
+/// This class provides methods to compress videos and track their progress.
 class LightCompressor {
-  /// Singleton instance of LightCompressor
+  /// Returns the singleton instance of [LightCompressor].
   factory LightCompressor() => _instance;
 
   LightCompressor._internal();
@@ -34,48 +36,42 @@ class LightCompressor {
   static const MethodChannel _channel = MethodChannel('light_compressor');
 
   /// A stream to listen to video compression progress
-  static const EventChannel _progressStream =
-      EventChannel('compression/stream');
+  static const EventChannel _progressStream = EventChannel(
+    'compression/stream',
+  );
 
   Stream<double>? _onProgressUpdated;
 
-  /// Fires whenever the uploading progress changes.
+  /// A broadcast stream that emits the current compression progress.
+  ///
+  /// The emitted values range from `0.0` to `100.0`.
   Stream<double> get onProgressUpdated {
-    _onProgressUpdated ??= _progressStream
-        .receiveBroadcastStream()
-        .map<double>((dynamic result) => result != null ? result : 0);
+    _onProgressUpdated ??= _progressStream.receiveBroadcastStream().map<double>(
+      (dynamic result) => result != null ? result : 0,
+    );
     return _onProgressUpdated!;
   }
 
-  /// This function compresses a given [path] video file and writes the
-  /// compressed video file in app-specific storage or external storage in
-  /// android and in gallery in ios.
+  /// Compresses a video file at the given [path] using the specified options.
   ///
-  /// The required parameters are;
-  /// * [path] is path of the provided video file to be compressed.
-  /// * [videoQuality] to allow choosing a video quality that can be
-  /// [VideoQuality.very_low], [VideoQuality.low], [VideoQuality.medium],
-  /// [VideoQuality.high], and [VideoQuality.very_high].
-  /// * [android] which contains configurations specific to Android. These
-  /// configs are:
-  ///   - saveAt: The location where the video should be saved externally.
-  ///     This value will be ignored if isExternal is `false`.
-  ///   - isSharedStorage: Whether to save the output video in external or internal
-  ///     storage.
-  /// * [ios] which contains configurations specific to iOS;
-  ///   - saveInGallery: To decide saving the video in gallery or not. This
-  ///     defaults to `true`.
-  /// * [video] contains configurations of the output video:
-  ///   - videoName: The name of the output video file. This value is required.
-  ///   - keepOriginalResolution: to keep the original video height and width when compressing.
-  ///   - videoBitrateInMbps: a custom bitrate for the video
-  ///   - videoHeight: a custom height for the video.
-  ///   - videoWidth: a custom width for the video.
-  /// The optional parameters are;
-  /// * [isMinBitrateCheckEnabled] to determine if the checking for a minimum bitrate
-  /// threshold before compression is enabled or not. This defaults to `true`.
-  /// * [disableAudio] to give the option to generate a video with no audio.
-  /// This defaults to `false`
+  /// The video is saved into either app-specific or shared storage depending on
+  /// the configurations provided in [android] and [ios].
+  ///
+  /// Required Parameters:
+  /// * [path] — The absolute file path of the source video to be compressed.
+  /// * [videoQuality] — The target quality preset.
+  /// * [android] — Android-specific configuration (e.g., storage type).
+  /// * [ios] — iOS/macOS-specific configuration (e.g., gallery saving).
+  /// * [video] — Specifications for the output video (e.g., name, resolution).
+  ///
+  /// Optional Parameters:
+  /// * [disableAudio] — If set to `true`, the audio track will be stripped, producing a silent video. Defaults to `false`.
+  /// * [isMinBitrateCheckEnabled] — If `true`, the compressor checks if the source video's bitrate is above a minimum threshold (2 Mbps) before starting. If it's below the threshold, compression is skipped to prevent quality degradation. Defaults to `true`.
+  ///
+  /// Returns a [Result] which can be:
+  /// * [OnSuccess] containing the output destination file path.
+  /// * [OnFailure] containing an error message.
+  /// * [OnCancelled] indicating that the compression was manually cancelled.
   Future<Result> compressVideo({
     required String path,
     required VideoQuality videoQuality,
@@ -85,21 +81,23 @@ class LightCompressor {
     bool? disableAudio = false,
     bool isMinBitrateCheckEnabled = true,
   }) async {
-    final Map<String, dynamic> response = jsonDecode(await _channel
-        .invokeMethod<dynamic>('startCompression', <String, dynamic>{
-      'path': path,
-      'videoQuality': videoQuality.toString().split('.').last,
-      'isSharedStorage': android.isSharedStorage,
-      'saveAt': android.saveAt.name,
-      'disableAudio': disableAudio,
-      'keepOriginalResolution': video.keepOriginalResolution,
-      'isMinBitrateCheckEnabled': isMinBitrateCheckEnabled,
-      'videoBitrateInMbps': video.videoBitrateInMbps,
-      'videoHeight': video.videoHeight,
-      'videoWidth': video.videoWidth,
-      'videoName': video.videoName,
-      'saveInGallery': ios.saveInGallery,
-    }));
+    final Map<String, dynamic> response = jsonDecode(
+      await _channel
+          .invokeMethod<dynamic>('startCompression', <String, dynamic>{
+            'path': path,
+            'videoQuality': videoQuality.toString().split('.').last,
+            'isSharedStorage': android.isSharedStorage,
+            'saveAt': android.saveAt.name,
+            'disableAudio': disableAudio,
+            'keepOriginalResolution': video.keepOriginalResolution,
+            'isMinBitrateCheckEnabled': isMinBitrateCheckEnabled,
+            'videoBitrateInMbps': video.videoBitrateInMbps,
+            'videoHeight': video.videoHeight,
+            'videoWidth': video.videoWidth,
+            'videoName': video.videoName,
+            'saveInGallery': ios.saveInGallery,
+          }),
+    );
 
     if (response['onSuccess'] != null) {
       return OnSuccess(response['onSuccess']);

@@ -4,16 +4,16 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'light_compressor_v2'
-  s.version          = '1.0.0'
+  s.version          = '1.0.1'
   s.summary          = 'Light Compressor Library'
   s.description      = <<-DESC
 Light Video Compressor Library.
                        DESC
-  s.homepage         = 'https://github.com/AbedElazizShe'
+  s.homepage         = 'https://github.com/Farid023/light_compressor_v2'
   s.license          = { :file => '../LICENSE' }
-  s.author           = { 'Your Company' => 'elaziz.shehadeh@gmail.com' }
+  s.author           = { 'Farid Gurbanov' => 'gurfdev@gmail.com' }
   s.source           = { :path => '.' }
-  s.source_files = 'Classes/**/*'
+  s.source_files = 'light_compressor_v2/Sources/light_compressor_v2/**/*.swift'
   s.dependency 'Flutter'
   s.platform = :ios, '11.0'
 
