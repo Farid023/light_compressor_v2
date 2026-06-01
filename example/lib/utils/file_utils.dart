@@ -17,7 +17,15 @@ String formatBytes(int bytes, int decimals) {
   if (bytes <= 0) return '0 B';
 
   const List<String> suffixes = [
-    'B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB',
+    'B',
+    'KB',
+    'MB',
+    'GB',
+    'TB',
+    'PB',
+    'EB',
+    'ZB',
+    'YB',
   ];
 
   final int i = (log(bytes) / log(1024)).floor();
