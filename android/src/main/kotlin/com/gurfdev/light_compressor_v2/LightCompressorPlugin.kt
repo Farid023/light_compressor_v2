@@ -368,6 +368,7 @@ import android.os.Looper
 import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionErrorType
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionListener
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoCompressor
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoQuality
@@ -420,6 +421,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         when (call.method) {
             "startCompression" -> handleStartCompression(call, result)
             "cancelCompression" -> VideoCompressor.cancel()
+            "clearCache" -> handleClearCache(result)
             else -> result.notImplemented()
         }
     }
@@ -502,6 +504,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         storageConfiguration: StorageConfiguration,
         videoName: String,
     ) {
+        val sourcePath = path
         VideoCompressor.start(
             context = applicationContext,
             uris = listOf(Uri.fromFile(File(path))),
@@ -524,12 +527,27 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                     }
                 }
 
-                override fun onSuccess(index: Int, size: Long, path: String?) {
-                    result.success(gson.toJson(mapOf("onSuccess" to (path ?: ""), "index" to index.toString())))
+                override fun onSuccess(index: Int, size: Long, path: String?, duration: Double) {
+                    val originalSize = try {
+                        File(sourcePath).length()
+                    } catch (e: Exception) {
+                        0L
+                    }
+                    result.success(gson.toJson(mapOf(
+                        "onSuccess" to (path ?: ""),
+                        "index" to index.toString(),
+                        "duration" to duration,
+                        "originalSize" to originalSize,
+                        "compressedSize" to size
+                    )))
                 }
 
-                override fun onFailure(index: Int, failureMessage: String) {
-                    result.success(gson.toJson(mapOf("onFailure" to failureMessage, "index" to index.toString())))
+                override fun onFailure(index: Int, failureMessage: String, errorType: CompressionErrorType) {
+                    result.success(gson.toJson(mapOf(
+                        "onFailure" to failureMessage,
+                        "index" to index.toString(),
+                        "failureType" to errorType.toWireValue()
+                    )))
                 }
 
                 override fun onCancelled(index: Int) {
@@ -618,4 +636,20 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
     }
 
     override fun onDetachedFromActivity() {}
+
+    private fun handleClearCache(result: Result) {
+        try {
+            val cacheDir = applicationContext.cacheDir
+            if (cacheDir != null && cacheDir.isDirectory) {
+                for (file in cacheDir.listFiles() ?: emptyArray()) {
+                    if (file.name.endsWith(".mp4")) {
+                        file.delete()
+                    }
+                }
+            }
+            result.success(true)
+        } catch (e: Exception) {
+            result.error("CLEAR_CACHE_FAILED", e.message, null)
+        }
+    }
 }

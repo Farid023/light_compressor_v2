@@ -30,6 +30,8 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
             startCompression(call: call, result: result)
         case "cancelCompression":
             compression?.cancel = true
+        case "clearCache":
+            clearCache(result: result)
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -110,22 +112,37 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
                 case .onStart:
                     break
 
-                case .onSuccess(let index, let url):
+                case .onSuccess(let index, let url, let duration):
                     if saveInGallery {
                         PHPhotoLibrary.shared().performChanges {
                             PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
                         }
                     }
-                    let response: [String: String] = [
-                        "onSuccess": url.path,
-                        "index": String(index),
-                    ]
+                    let originalSize = (try? FileManager.default
+                        .attributesOfItem(atPath: path))?[.size] as? Int ?? 0
+                    let compressedSize = (try? FileManager.default
+                        .attributesOfItem(atPath: url.path))?[.size] as? Int ?? 0
+                    struct SuccessResponse: Encodable {
+                        let onSuccess: String
+                        let index: String
+                        let duration: Double
+                        let originalSize: Int
+                        let compressedSize: Int
+                    }
+                    let response = SuccessResponse(
+                        onSuccess: url.path,
+                        index: String(index),
+                        duration: duration,
+                        originalSize: originalSize,
+                        compressedSize: compressedSize
+                    )
                     result(response.toJson)
 
                 case .onFailure(let index, let error):
                     let response: [String: String] = [
                         "onFailure": error.title,
                         "index": String(index),
+                        "failureType": error.type.rawValue,
                     ]
                     result(response.toJson)
 
@@ -146,6 +163,15 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
         case "high":      return .high
         case "very_high": return .very_high
         default:          return .medium
+        }
+    }
+
+    private func clearCache(result: @escaping FlutterResult) {
+        do {
+            try LightCompressor.clearCache()
+            result(true)
+        } catch {
+            result(FlutterError(code: "CLEAR_CACHE_FAILED", message: error.localizedDescription, details: nil))
         }
     }
 }

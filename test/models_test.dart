@@ -59,8 +59,18 @@ void main() {
 
   group('CompressionResult', () {
     test('OnSuccess contains destinationPath', () {
-      const result = OnSuccess('/path/to/video.mp4');
+      const result = OnSuccess(
+        destinationPath: '/path/to/video.mp4',
+        originalSize: 1000,
+        compressedSize: 500,
+        duration: 10.0,
+        ratio: 50.0,
+      );
       expect(result.destinationPath, '/path/to/video.mp4');
+      expect(result.originalSize, 1000);
+      expect(result.compressedSize, 500);
+      expect(result.duration, 10.0);
+      expect(result.ratio, 50.0);
     });
 
     test('OnFailure contains message', () {
