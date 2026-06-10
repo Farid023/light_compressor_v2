@@ -1,5 +1,13 @@
 # Changelog
 
+# 1.2.0
+
+### New
+
+- **Batch compression** — `compressVideos({required List<String> paths, required List<String> videoNames, ...})` compresses multiple videos with a shared set of options and returns `Future<List<Result>>` in the same order as the inputs (each entry an `OnSuccess`, `OnFailure` or `OnCancelled`). A single video failing does not stop the rest.
+- **`onBatchUpdate`** — a `Stream<BatchEvent>` that emits `BatchProgress` (per-video and overall percent) and `BatchItemCompleted` (a video's result) as the batch runs, for building per-item UIs.
+- The single-video `compressVideo` and its `onProgressUpdated` stream are unchanged — batch uses a separate `compression/batch-stream` channel, so existing code is unaffected.
+
 # 1.1.0
 
 ### New

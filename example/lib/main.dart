@@ -85,11 +85,19 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Path to a generated preview thumbnail (Phase 2 demo).
   String? _thumbnailPath;
 
+  /// Status line for the batch compression demo (Phase 3).
+  String? _batchStatus;
+
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
           title: const Text('Compressor Sample'),
           actions: [
+            IconButton(
+              icon: const Icon(Icons.library_add),
+              tooltip: 'Batch compress',
+              onPressed: _pickAndCompressBatch,
+            ),
             IconButton(
               icon: const Icon(Icons.delete_sweep),
               tooltip: 'Clear Cache',
@@ -108,6 +116,17 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (_batchStatus != null) ...[
+                Text(
+                  _batchStatus!,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF377FC2),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
               if (_filePath != null) _buildFileInfo(),
               const SizedBox(height: 16),
               Expanded(child: _buildBody(context)),
@@ -292,6 +311,59 @@ class _HomeScreenState extends State<HomeScreen> {
         icon: const Icon(Icons.play_arrow),
         label: const Text('Play Video'),
       );
+
+  /// Picks several videos and compresses them as a batch, reflecting
+  /// per-video progress and completion from [LightCompressor.onBatchUpdate].
+  Future<void> _pickAndCompressBatch() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.video,
+      allowMultiple: true,
+    );
+    final files = result?.files;
+    if (files == null || files.isEmpty) return;
+
+    final paths = [for (final f in files) f.path!];
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final names = [for (var i = 0; i < paths.length; i++) 'Batch-$stamp-$i.mp4'];
+
+    final subscription = _lightCompressor.onBatchUpdate.listen((event) {
+      if (!mounted) return;
+      setState(() {
+        if (event is BatchProgress) {
+          _batchStatus =
+              'Compressing ${event.index + 1}/${paths.length} — '
+              '${event.percent.toStringAsFixed(0)}% '
+              '(overall ${event.overallPercent.toStringAsFixed(0)}%)';
+        } else if (event is BatchItemCompleted) {
+          _batchStatus = 'Video ${event.index + 1}/${paths.length} finished';
+        }
+      });
+    });
+
+    setState(() => _batchStatus = 'Starting batch of ${paths.length}…');
+
+    try {
+      final results = await _lightCompressor.compressVideos(
+        paths: paths,
+        videoNames: names,
+        videoQuality: VideoQuality.medium,
+        isMinBitrateCheckEnabled: false,
+        android: AndroidConfig(isSharedStorage: true, saveAt: SaveAt.Movies),
+        ios: IOSConfig(saveInGallery: false),
+      );
+      final ok = results.whereType<OnSuccess>().length;
+      if (mounted) {
+        setState(
+          () => _batchStatus =
+              'Batch done: $ok/${results.length} succeeded',
+        );
+      }
+    } catch (e) {
+      if (mounted) setState(() => _batchStatus = 'Batch error: $e');
+    } finally {
+      await subscription.cancel();
+    }
+  }
 
   /// Opens the file picker, starts video compression, and updates
   /// the UI based on the result.
