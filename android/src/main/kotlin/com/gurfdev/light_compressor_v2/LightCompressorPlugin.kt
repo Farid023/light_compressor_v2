@@ -396,11 +396,14 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
     companion object {
         const val CHANNEL = "light_compressor"
         const val STREAM  = "compression/stream"
+        const val BATCH_STREAM = "compression/batch-stream"
     }
 
     private lateinit var channel: MethodChannel
     private lateinit var eventChannel: EventChannel
+    private lateinit var batchEventChannel: EventChannel
     private var eventSink: EventChannel.EventSink? = null
+    private var batchEventSink: EventChannel.EventSink? = null
     private val gson = Gson()
     private lateinit var applicationContext: Context
     private lateinit var activity: Activity
@@ -413,11 +416,23 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         channel.setMethodCallHandler(this)
         eventChannel = EventChannel(binding.binaryMessenger, STREAM)
         eventChannel.setStreamHandler(this)
+
+        batchEventChannel = EventChannel(binding.binaryMessenger, BATCH_STREAM)
+        batchEventChannel.setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                batchEventSink = events
+            }
+
+            override fun onCancel(arguments: Any?) {
+                batchEventSink = null
+            }
+        })
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
+        batchEventChannel.setStreamHandler(null)
     }
 
     // MARK: - MethodCallHandler
@@ -425,6 +440,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
     override fun onMethodCall(call: MethodCall, result: Result) {
         when (call.method) {
             "startCompression" -> handleStartCompression(call, result)
+            "startBatchCompression" -> handleStartBatchCompression(call, result)
             "cancelCompression" -> VideoCompressor.cancel()
             "clearCache" -> handleClearCache(result)
             "getMediaInfo" -> handleGetMediaInfo(call, result)
@@ -561,6 +577,134 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                     Handler(Looper.getMainLooper()).post {
                         result.success(gson.toJson(mapOf("onCancelled" to true)))
                     }
+                }
+            }
+        )
+    }
+
+    // MARK: - Batch compression
+
+    private fun handleStartBatchCompression(call: MethodCall, result: Result) {
+        val paths: List<String> = call.argument("paths") ?: emptyList()
+        val videoNames: List<String> = call.argument("videoNames") ?: emptyList()
+        if (paths.isEmpty() || paths.size != videoNames.size) {
+            result.success(emptyList<Any?>())
+            return
+        }
+
+        val isMinBitrateCheckEnabled: Boolean = call.argument("isMinBitrateCheckEnabled") ?: true
+        val isSharedStorage: Boolean = call.argument("isSharedStorage") ?: true
+        val disableAudio: Boolean = call.argument("disableAudio") ?: false
+        val keepOriginalResolution: Boolean = call.argument("keepOriginalResolution") ?: false
+        val videoBitrateInMbps: Int? = call.argument("videoBitrateInMbps")
+        val videoHeight: Int? = call.argument("videoHeight")
+        val videoWidth: Int? = call.argument("videoWidth")
+        val saveAt: String = call.argument("saveAt") ?: "Movies"
+
+        val quality: VideoQuality = when (call.argument<String>("videoQuality")) {
+            "very_low"  -> VideoQuality.VERY_LOW
+            "low"       -> VideoQuality.LOW
+            "medium"    -> VideoQuality.MEDIUM
+            "high"      -> VideoQuality.HIGH
+            "very_high" -> VideoQuality.VERY_HIGH
+            else        -> VideoQuality.MEDIUM
+        }
+
+        val resizer: VideoResizer? = when {
+            keepOriginalResolution -> null
+            videoWidth != null && videoHeight != null ->
+                VideoResizer.matchSize(videoWidth.toDouble(), videoHeight.toDouble(), true)
+            else -> VideoResizer.auto
+        }
+
+        val storageConfiguration: StorageConfiguration = if (isSharedStorage) {
+            SharedStorageConfiguration(
+                saveAt = when (saveAt) {
+                    "Downloads" -> SaveLocation.downloads
+                    "Pictures"  -> SaveLocation.pictures
+                    else        -> SaveLocation.movies
+                }
+            )
+        } else {
+            AppSpecificStorageConfiguration()
+        }
+
+        val count = paths.size
+        val results = arrayOfNulls<Map<String, Any?>>(count)
+        val percents = FloatArray(count)
+        var completed = 0
+        val mainHandler = Handler(Looper.getMainLooper())
+
+        // Records a video's outcome on the main thread, emits a per-item event,
+        // and resolves the method result once every video has reported.
+        fun record(index: Int, map: Map<String, Any?>) {
+            mainHandler.post {
+                if (index in 0 until count && results[index] == null) {
+                    results[index] = map
+                    completed += 1
+                    val event = HashMap<String, Any?>(map)
+                    event["type"] = "result"
+                    event["index"] = index
+                    batchEventSink?.success(event)
+                    if (completed == count) {
+                        result.success(results.map { it ?: mapOf("onFailure" to "Unknown error") })
+                    }
+                }
+            }
+        }
+
+        VideoCompressor.start(
+            context = applicationContext,
+            uris = paths.map { Uri.fromFile(File(it)) },
+            isStreamable = false,
+            storageConfiguration = storageConfiguration,
+            configureWith = Configuration(
+                quality = quality,
+                isMinBitrateCheckEnabled = isMinBitrateCheckEnabled,
+                videoBitrateInMbps = videoBitrateInMbps,
+                disableAudio = disableAudio,
+                resizer = resizer,
+                videoNames = videoNames,
+            ),
+            listener = object : CompressionListener {
+                override fun onStart(index: Int) {}
+
+                override fun onProgress(index: Int, percent: Float) {
+                    mainHandler.post {
+                        if (index in 0 until count) percents[index] = percent
+                        val overall = if (count > 0) percents.sum() / count else 0f
+                        batchEventSink?.success(mapOf(
+                            "type" to "progress",
+                            "index" to index,
+                            "percent" to percent.toDouble(),
+                            "overallPercent" to overall.toDouble()
+                        ))
+                    }
+                }
+
+                override fun onSuccess(index: Int, size: Long, path: String?, duration: Double) {
+                    val originalSize = try {
+                        File(paths[index]).length()
+                    } catch (e: Exception) {
+                        0L
+                    }
+                    record(index, mapOf(
+                        "onSuccess" to (path ?: ""),
+                        "originalSize" to originalSize,
+                        "compressedSize" to size,
+                        "duration" to duration
+                    ))
+                }
+
+                override fun onFailure(index: Int, failureMessage: String, errorType: CompressionErrorType) {
+                    record(index, mapOf(
+                        "onFailure" to failureMessage,
+                        "failureType" to errorType.toWireValue()
+                    ))
+                }
+
+                override fun onCancelled(index: Int) {
+                    record(index, mapOf("onCancelled" to true))
                 }
             }
         )

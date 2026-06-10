@@ -41,7 +41,13 @@ class LightCompressor {
     'compression/stream',
   );
 
+  /// A stream that carries per-video updates while a batch is compressing.
+  static const EventChannel _batchStream = EventChannel(
+    'compression/batch-stream',
+  );
+
   Stream<double>? _onProgressUpdated;
+  Stream<BatchEvent>? _onBatchUpdate;
 
   /// A broadcast stream that emits the current compression progress.
   ///
@@ -51,6 +57,32 @@ class LightCompressor {
       (dynamic result) => result != null ? result : 0,
     );
     return _onProgressUpdated!;
+  }
+
+  /// A broadcast stream of [BatchEvent]s emitted during [compressVideos].
+  ///
+  /// Emits [BatchProgress] as each video advances and [BatchItemCompleted] the
+  /// moment a video finishes (success, failure or cancellation). Subscribe to
+  /// this to drive a per-item UI; the final ordered results are also returned
+  /// by [compressVideos].
+  Stream<BatchEvent> get onBatchUpdate {
+    _onBatchUpdate ??= _batchStream.receiveBroadcastStream().map<BatchEvent>((
+      dynamic event,
+    ) {
+      final Map<String, dynamic> map = Map<String, dynamic>.from(
+        event as Map<dynamic, dynamic>,
+      );
+      final int index = (map['index'] as num?)?.toInt() ?? 0;
+      if (map['type'] == 'progress') {
+        return BatchProgress(
+          index: index,
+          percent: (map['percent'] as num?)?.toDouble() ?? 0.0,
+          overallPercent: (map['overallPercent'] as num?)?.toDouble() ?? 0.0,
+        );
+      }
+      return BatchItemCompleted(index: index, result: _resultFromMap(map));
+    });
+    return _onBatchUpdate!;
   }
 
   /// Compresses a video file at the given [path] using the specified options.
@@ -157,6 +189,93 @@ class LightCompressor {
     } else {
       return const OnFailure('Something went wrong');
     }
+  }
+
+  /// Compresses multiple videos with a single shared set of options.
+  ///
+  /// [paths] are the source video paths and [videoNames] the matching output
+  /// file names; the two lists must have the same length. Every video shares
+  /// the same [videoQuality], resolution and bitrate settings.
+  ///
+  /// Returns the results in the same order as [paths]; each entry is an
+  /// [OnSuccess], [OnFailure] or [OnCancelled]. Every video is attempted: a
+  /// single video failing does not throw and does not stop the others — its
+  /// slot in the returned list becomes an [OnFailure].
+  ///
+  /// Subscribe to [onBatchUpdate] for per-video progress and completion events
+  /// as the batch runs.
+  Future<List<Result>> compressVideos({
+    required List<String> paths,
+    required List<String> videoNames,
+    required VideoQuality videoQuality,
+    required AndroidConfig android,
+    required IOSConfig ios,
+    bool keepOriginalResolution = false,
+    int? videoWidth,
+    int? videoHeight,
+    int? videoBitrateInMbps,
+    bool disableAudio = false,
+    bool isMinBitrateCheckEnabled = true,
+  }) async {
+    assert(
+      paths.length == videoNames.length,
+      'paths and videoNames must have the same length',
+    );
+    if (paths.isEmpty) {
+      return <Result>[];
+    }
+
+    final List<dynamic>? response = await _channel
+        .invokeListMethod<dynamic>('startBatchCompression', <String, dynamic>{
+          'paths': paths,
+          'videoNames': videoNames,
+          'videoQuality': videoQuality.toString().split('.').last,
+          'isSharedStorage': android.isSharedStorage,
+          'saveAt': android.saveAt.name,
+          'saveInGallery': ios.saveInGallery,
+          'keepOriginalResolution': keepOriginalResolution,
+          'videoWidth': videoWidth,
+          'videoHeight': videoHeight,
+          'videoBitrateInMbps': videoBitrateInMbps,
+          'disableAudio': disableAudio,
+          'isMinBitrateCheckEnabled': isMinBitrateCheckEnabled,
+        });
+
+    if (response == null) {
+      return <Result>[];
+    }
+    return response
+        .map(
+          (dynamic e) =>
+              _resultFromMap(Map<String, dynamic>.from(e as Map<dynamic, dynamic>)),
+        )
+        .toList();
+  }
+
+  /// Builds a [Result] from a native result map. Shared by the [compressVideos]
+  /// return value and the [BatchItemCompleted] events on [onBatchUpdate].
+  Result _resultFromMap(Map<String, dynamic> map) {
+    if (map['onSuccess'] != null) {
+      final String destinationPath = map['onSuccess'] as String;
+      final double duration = (map['duration'] as num?)?.toDouble() ?? 0.0;
+      final int originalSize = (map['originalSize'] as num?)?.toInt() ?? 0;
+      final int compressedSize = (map['compressedSize'] as num?)?.toInt() ?? 0;
+      final double ratio = originalSize > 0
+          ? ((1 - compressedSize / originalSize) * 100).clamp(0.0, 100.0)
+          : 0.0;
+      return OnSuccess(
+        destinationPath: destinationPath,
+        originalSize: originalSize,
+        compressedSize: compressedSize,
+        duration: duration,
+        ratio: ratio,
+      );
+    } else if (map['onFailure'] != null) {
+      return OnFailure(map['onFailure'] as String);
+    } else if (map['onCancelled'] != null) {
+      return OnCancelled(isCancelled: map['onCancelled'] == true);
+    }
+    return const OnFailure('Something went wrong');
   }
 
   /// Maps a native failure to a typed exception.

@@ -5,14 +5,18 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
     
     private var eventSink: FlutterEventSink?
     private var compression: Compression? = nil
-    
+    private let batchStreamHandler = BatchStreamHandler()
+
     public static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(name: "light_compressor", binaryMessenger: registrar.messenger)
         let instance = LightCompressorPlugin()
         registrar.addMethodCallDelegate(instance, channel: channel)
-        
+
         let eventChannel = FlutterEventChannel(name: "compression/stream", binaryMessenger: registrar.messenger)
         eventChannel.setStreamHandler(instance.self)
+
+        let batchChannel = FlutterEventChannel(name: "compression/batch-stream", binaryMessenger: registrar.messenger)
+        batchChannel.setStreamHandler(instance.batchStreamHandler)
     }
     
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -50,7 +54,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                             videoSize: videoWidth == nil || videoHeight == nil ? nil : CGSize(width: videoWidth!, height: videoHeight!))
                     )],
                     progressQueue: .main,
-                    progressHandler: { progress in
+                    progressHandler: { _, progress in
                         DispatchQueue.main.async { [unowned self] in
                             if(self.eventSink != nil){
                                 let progress = Float(progress.fractionCompleted * 100)
@@ -108,6 +112,8 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                     }
                 )
             }
+        case "startBatchCompression":
+            startBatchCompression(call: call, result: result)
         case "cancelCompression":
             compression?.cancel = true
         case "clearCache":
@@ -120,6 +126,128 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
             let response: [String: String] = ["onFailure": "Method is not defined!"]
             result(response.toJson)
         }
+    }
+
+    private func startBatchCompression(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard
+            let args                   = call.arguments as? [String: Any?],
+            let paths                  = args["paths"]                  as? [String],
+            let videoNames             = args["videoNames"]             as? [String],
+            let isMinBitrateEnabled    = args["isMinBitrateCheckEnabled"] as? Bool,
+            let disableAudio           = args["disableAudio"]           as? Bool,
+            let saveInGallery          = args["saveInGallery"]          as? Bool,
+            let keepOriginalResolution = args["keepOriginalResolution"] as? Bool,
+            let videoQuality           = args["videoQuality"]           as? String,
+            paths.count == videoNames.count
+        else {
+            result(FlutterError(
+                code: "INVALID_ARGS",
+                message: "Missing or mismatched batch arguments.",
+                details: nil))
+            return
+        }
+        if paths.isEmpty {
+            result([])
+            return
+        }
+
+        let videoBitrateInMbps = args["videoBitrateInMbps"] as? Int
+        let videoHeight        = args["videoHeight"]        as? Int
+        let videoWidth         = args["videoWidth"]         as? Int
+        let videoSize: CGSize? = videoWidth != nil && videoHeight != nil
+            ? CGSize(width: videoWidth!, height: videoHeight!)
+            : nil
+
+        let configuration = LightCompressor.Video.Configuration(
+            quality: getVideoQuality(quality: videoQuality),
+            isMinBitrateCheckEnabled: isMinBitrateEnabled,
+            videoBitrateInMbps: videoBitrateInMbps,
+            disableAudio: disableAudio,
+            keepOriginalResolution: keepOriginalResolution,
+            videoSize: videoSize)
+
+        let count = paths.count
+        var videos: [LightCompressor.Video] = []
+        for i in 0..<count {
+            let destination = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("\(videoNames[i]).mp4")
+            try? FileManager.default.removeItem(at: destination)
+            videos.append(.init(
+                source: URL(fileURLWithPath: paths[i]),
+                destination: destination,
+                configuration: configuration))
+        }
+
+        var results = [[String: Any]?](repeating: nil, count: count)
+        var percents = [Double](repeating: 0, count: count)
+        var completed = 0
+
+        func record(_ index: Int, _ map: [String: Any]) {
+            DispatchQueue.main.async {
+                guard index >= 0, index < count, results[index] == nil else { return }
+                results[index] = map
+                completed += 1
+                var event = map
+                event["type"] = "result"
+                event["index"] = index
+                self.batchStreamHandler.eventSink?(event)
+                if completed == count {
+                    result(results.map { $0 ?? ["onFailure": "Unknown error"] })
+                }
+            }
+        }
+
+        compression = LightCompressor().compressVideo(
+            videos: videos,
+            progressQueue: .main,
+            progressHandler: { [weak self] index, progress in
+                guard let self else { return }
+                if index >= 0, index < count {
+                    percents[index] = progress.fractionCompleted * 100
+                }
+                let overall = percents.reduce(0, +) / Double(count)
+                self.batchStreamHandler.eventSink?([
+                    "type": "progress",
+                    "index": index,
+                    "percent": progress.fractionCompleted * 100,
+                    "overallPercent": overall,
+                ])
+            },
+            completion: { compressionResult in
+                switch compressionResult {
+                case .onStart:
+                    break
+
+                case .onSuccess(let index, let outputURL, let duration):
+                    if saveInGallery {
+                        DispatchQueue.main.async {
+                            PHPhotoLibrary.shared().performChanges {
+                                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: outputURL)
+                            }
+                        }
+                    }
+                    let originalSize = (try? FileManager.default
+                        .attributesOfItem(atPath: paths[index]))?[.size] as? Int ?? 0
+                    let compressedSize = (try? FileManager.default
+                        .attributesOfItem(atPath: outputURL.path))?[.size] as? Int ?? 0
+                    record(index, [
+                        "onSuccess": outputURL.path,
+                        "originalSize": originalSize,
+                        "compressedSize": compressedSize,
+                        "duration": duration,
+                    ])
+
+                case .onFailure(let index, let error):
+                    record(index, [
+                        "onFailure": error.title,
+                        "failureType": error.type.rawValue,
+                    ])
+
+                case .onCancelled:
+                    break
+                }
+            }
+        )
     }
 
     private func getMediaInfo(call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -204,5 +332,24 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
         } catch {
             result(FlutterError(code: "CLEAR_CACHE_FAILED", message: error.localizedDescription, details: nil))
         }
+    }
+}
+
+/// Stream handler for the batch progress/result EventChannel
+/// (`compression/batch-stream`).
+final class BatchStreamHandler: NSObject, FlutterStreamHandler {
+    var eventSink: FlutterEventSink?
+
+    func onListen(
+        withArguments arguments: Any?,
+        eventSink events: @escaping FlutterEventSink
+    ) -> FlutterError? {
+        eventSink = events
+        return nil
+    }
+
+    func onCancel(withArguments arguments: Any?) -> FlutterError? {
+        eventSink = nil
+        return nil
     }
 }
