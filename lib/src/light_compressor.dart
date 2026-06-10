@@ -204,6 +204,99 @@ class LightCompressor {
     }
   }
 
+  /// Reads metadata (dimensions, duration, bitrate, rotation, etc.) from the
+  /// video located at [path].
+  ///
+  /// Throws a [VideoNotFoundException] if the file does not exist,
+  /// a [PermissionDeniedException] if it cannot be accessed, or a
+  /// [MediaInfoException] if the metadata could not be read.
+  Future<MediaInfo> getMediaInfo(String path) async {
+    try {
+      final Map<dynamic, dynamic>? result = await _channel
+          .invokeMapMethod<dynamic, dynamic>('getMediaInfo', <String, dynamic>{
+            'path': path,
+          });
+      if (result == null) {
+        throw const MediaInfoException();
+      }
+      return MediaInfo.fromMap(Map<String, dynamic>.from(result));
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(
+        e,
+        MediaInfoException(e.message ?? _defaultMediaInfoMessage),
+      );
+    }
+  }
+
+  /// Generates a JPEG thumbnail from the video at [path] and returns the
+  /// absolute path of the generated image file.
+  ///
+  /// * [positionInMs] — the timecode (in milliseconds) of the frame to grab.
+  ///   Clamped to the video duration by the native side. Defaults to `0`.
+  /// * [quality] — JPEG quality from `0` (smallest) to `100` (best).
+  ///   Defaults to `50`.
+  ///
+  /// The image is written to a temporary directory; use [clearCache] to remove
+  /// generated files when they are no longer needed.
+  ///
+  /// Throws a [VideoNotFoundException] if the file does not exist,
+  /// a [PermissionDeniedException] if it cannot be accessed, or a
+  /// [ThumbnailException] if the frame could not be extracted.
+  Future<String> getVideoThumbnail(
+    String path, {
+    int positionInMs = 0,
+    int quality = 50,
+  }) async {
+    try {
+      final String? thumbnailPath = await _channel.invokeMethod<String>(
+        'getVideoThumbnail',
+        <String, dynamic>{
+          'path': path,
+          'positionInMs': positionInMs < 0 ? 0 : positionInMs,
+          'quality': quality.clamp(0, 100),
+        },
+      );
+      if (thumbnailPath == null || thumbnailPath.isEmpty) {
+        throw const ThumbnailException();
+      }
+      return thumbnailPath;
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(
+        e,
+        ThumbnailException(e.message ?? _defaultThumbnailMessage),
+      );
+    }
+  }
+
+  /// Maps a native [PlatformException] code onto a typed exception, falling
+  /// back to [fallback] for codes that are not specifically recognized.
+  LightCompressorException _mapPlatformException(
+    PlatformException e,
+    LightCompressorException fallback,
+  ) {
+    switch (e.code) {
+      case 'PERMISSION_DENIED':
+        return PermissionDeniedException(e.message ?? _defaultPermissionMessage);
+      case 'VIDEO_NOT_FOUND':
+        return VideoNotFoundException(e.message ?? _defaultNotFoundMessage);
+      case 'UNSUPPORTED_VIDEO':
+        return UnsupportedVideoException(e.message ?? _defaultUnsupportedMessage);
+      default:
+        return fallback;
+    }
+  }
+
+  static const String _defaultMediaInfoMessage =
+      'Failed to read media information from the video.';
+  static const String _defaultThumbnailMessage =
+      'Failed to generate a thumbnail from the video.';
+  static const String _defaultPermissionMessage =
+      'Permission denied to access the video file or storage.';
+  static const String _defaultNotFoundMessage =
+      'The video file was not found at the specified path.';
+  static const String _defaultUnsupportedMessage =
+      'The provided video format or codec is unsupported.';
+
   /// Clears temporary `.mp4` files created during compression.
   ///
   /// Platform behavior differs:

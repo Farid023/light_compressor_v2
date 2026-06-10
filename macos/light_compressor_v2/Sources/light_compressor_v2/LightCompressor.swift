@@ -1,4 +1,5 @@
 import AVFoundation
+import ImageIO
 
 /// Desired quality level for video compression.
 public enum VideoQuality {
@@ -50,6 +51,34 @@ public struct CompressionError: LocalizedError {
     init(title: String = "Compression Error", type: CompressionErrorType = .unknown) {
         self.title = title
         self.type = type
+    }
+}
+
+/// Errors thrown by the metadata and thumbnail helpers. Each case carries a
+/// stable [code] that the plugin layer forwards to Dart as a PlatformException
+/// code, plus a human-readable [message].
+public enum MediaError: Error {
+    /// The source file does not exist.
+    case notFound
+    /// The file exists but no video track could be read.
+    case unreadable
+    /// A thumbnail frame could not be generated.
+    case thumbnailFailed
+
+    public var code: String {
+        switch self {
+        case .notFound: return "VIDEO_NOT_FOUND"
+        case .unreadable: return "UNSUPPORTED_VIDEO"
+        case .thumbnailFailed: return "THUMBNAIL_FAILED"
+        }
+    }
+
+    public var message: String {
+        switch self {
+        case .notFound: return "The video file was not found at the specified path."
+        case .unreadable: return "The video could not be read or has no video track."
+        case .thumbnailFailed: return "Could not extract a frame from the video."
+        }
     }
 }
 
@@ -112,17 +141,132 @@ public struct LightCompressor {
 
     public init() {}
 
-    /// Deletes all `.mp4` files in the temporary directory used for compression
-    /// output. Shared by the iOS and macOS plugins.
+    /// Deletes generated `.mp4` (compressed videos) and `.jpg` (thumbnails)
+    /// files from the temporary directory. Shared by the iOS and macOS plugins.
     ///
-    /// Note: compressed videos are written to the temporary directory, so calling
-    /// this removes any compressed file that has not been moved/saved elsewhere.
+    /// Note: compressed videos and thumbnails are written to the temporary
+    /// directory, so calling this removes any such file that has not been
+    /// moved/saved elsewhere.
     public static func clearCache() throws {
         let tempDir = NSTemporaryDirectory()
         let files = try FileManager.default.contentsOfDirectory(atPath: tempDir)
-        for file in files where file.hasSuffix(".mp4") {
+        for file in files where file.hasSuffix(".mp4") || file.hasSuffix(".jpg") {
             let filePath = (tempDir as NSString).appendingPathComponent(file)
             try FileManager.default.removeItem(atPath: filePath)
+        }
+    }
+
+    /// Reads metadata (dimensions, duration, bitrate, rotation, frame rate)
+    /// from the video at [path].
+    ///
+    /// - Returns: a dictionary matching the keys expected by `MediaInfo.fromMap`.
+    /// - Throws: [MediaError.notFound] or [MediaError.unreadable].
+    public static func mediaInfo(for path: String) throws -> [String: Any] {
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw MediaError.notFound
+        }
+        let url = URL(fileURLWithPath: path)
+        let asset = AVURLAsset(url: url)
+        guard let track = asset.tracks(withMediaType: .video).first else {
+            throw MediaError.unreadable
+        }
+
+        let naturalSize = track.naturalSize
+        var info: [String: Any] = [
+            "width": Int(abs(naturalSize.width)),
+            "height": Int(abs(naturalSize.height)),
+            "bitrate": Int(track.estimatedDataRate),
+            "rotation": rotationDegrees(from: track.preferredTransform),
+            "frameRate": Double(track.nominalFrameRate),
+        ]
+
+        let durationSeconds = CMTimeGetSeconds(asset.duration)
+        if durationSeconds.isFinite && durationSeconds > 0 {
+            info["durationMs"] = Int(durationSeconds * 1000.0)
+        }
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+           let size = (attrs[.size] as? NSNumber)?.intValue {
+            info["fileSize"] = size
+        }
+        if let mimeType = mimeType(for: url) {
+            info["mimeType"] = mimeType
+        }
+        return info
+    }
+
+    /// Generates a JPEG thumbnail from the video at [path] and returns the
+    /// absolute path of the written image.
+    ///
+    /// - Parameters:
+    ///   - positionInMs: the timecode (clamped to the video duration) of the
+    ///     frame to capture.
+    ///   - quality: JPEG quality from 0 (smallest) to 100 (best).
+    /// - Throws: [MediaError.notFound] or [MediaError.thumbnailFailed].
+    public static func thumbnail(for path: String, positionInMs: Int, quality: Int) throws -> String {
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw MediaError.notFound
+        }
+        let url = URL(fileURLWithPath: path)
+        let asset = AVURLAsset(url: url)
+
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 1, preferredTimescale: 600)
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 1, preferredTimescale: 600)
+
+        var seconds = Double(max(0, positionInMs)) / 1000.0
+        let durationSeconds = CMTimeGetSeconds(asset.duration)
+        if durationSeconds.isFinite && durationSeconds > 0 {
+            seconds = min(seconds, max(0, durationSeconds - 0.05))
+        }
+        let time = CMTime(seconds: seconds, preferredTimescale: 600)
+
+        guard let cgImage = try? generator.copyCGImage(at: time, actualTime: nil) else {
+            throw MediaError.thumbnailFailed
+        }
+
+        let outURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("thumb_\(UUID().uuidString).jpg")
+        let clampedQuality = Double(min(max(quality, 0), 100)) / 100.0
+        guard writeJPEG(cgImage, to: outURL, quality: clampedQuality) else {
+            throw MediaError.thumbnailFailed
+        }
+        return outURL.path
+    }
+
+    // MARK: - Media helpers
+
+    /// Writes [image] as JPEG to [url] using ImageIO (available on iOS & macOS).
+    private static func writeJPEG(_ image: CGImage, to url: URL, quality: Double) -> Bool {
+        guard let destination = CGImageDestinationCreateWithURL(
+            url as CFURL, "public.jpeg" as CFString, 1, nil
+        ) else {
+            return false
+        }
+        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
+        CGImageDestinationAddImage(destination, image, options as CFDictionary)
+        return CGImageDestinationFinalize(destination)
+    }
+
+    /// Derives rotation degrees (0/90/180/270) from a track's preferred transform.
+    private static func rotationDegrees(from transform: CGAffineTransform) -> Int {
+        let angle = atan2(transform.b, transform.a)
+        var degrees = Int(round(angle * 180 / .pi))
+        degrees %= 360
+        if degrees < 0 { degrees += 360 }
+        return degrees
+    }
+
+    /// Best-effort MIME type derived from the file extension.
+    private static func mimeType(for url: URL) -> String? {
+        switch url.pathExtension.lowercased() {
+        case "mp4", "m4v": return "video/mp4"
+        case "mov", "qt": return "video/quicktime"
+        case "3gp": return "video/3gpp"
+        case "mkv": return "video/x-matroska"
+        case "webm": return "video/webm"
+        case "avi": return "video/x-msvideo"
+        default: return nil
         }
     }
 

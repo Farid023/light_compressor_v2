@@ -33,3 +33,19 @@ class VideoNotFoundException extends LightCompressorException {
     super.message = 'The video file was not found at the specified path.',
   ]);
 }
+
+/// Thrown when the media metadata could not be read from the video.
+class MediaInfoException extends LightCompressorException {
+  /// Creates a [MediaInfoException] with an optional custom message.
+  const MediaInfoException([
+    super.message = 'Failed to read media information from the video.',
+  ]);
+}
+
+/// Thrown when a thumbnail frame could not be generated from the video.
+class ThumbnailException extends LightCompressorException {
+  /// Creates a [ThumbnailException] with an optional custom message.
+  const ThumbnailException([
+    super.message = 'Failed to generate a thumbnail from the video.',
+  ]);
+}

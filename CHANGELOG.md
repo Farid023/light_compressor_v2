@@ -1,5 +1,24 @@
 # Changelog
 
+# 1.1.0
+
+### New
+
+- **`getMediaInfo(path)`** — returns a structured `MediaInfo` (width, height, duration, file size, bitrate, rotation, frame rate, MIME type) with rotation-aware `displayWidth`/`displayHeight`. On Android, duration/bitrate fall back to the `MediaExtractor` track format when the metadata retriever does not expose them.
+- **`getVideoThumbnail(path, {positionInMs, quality})`** — extracts a JPEG frame and returns its file path (Android `MediaMetadataRetriever`, iOS/macOS `AVAssetImageGenerator`).
+- **`clearCache()`** — deletes temporary files generated during compression and thumbnail extraction (`.mp4` and `.jpg`).
+- **Structured success result** — `OnSuccess` now carries `originalSize`, `compressedSize`, `duration` and `ratio` (percentage reduction).
+- **Typed exceptions** — `PermissionDeniedException`, `UnsupportedVideoException`, `VideoNotFoundException`, `MediaInfoException`, `ThumbnailException`, all extending `LightCompressorException`. Native failures are surfaced via stable error codes instead of message text.
+- Example app demonstrates metadata display, thumbnail preview, and a Clear Cache action.
+
+### Fixed
+
+- **Android H.264 encoder** — pair `KEY_PROFILE` with a supported `KEY_LEVEL`, so the hardware encoder no longer fails `configure()` with error `-38` and silently downgrades to Baseline.
+- **Reported duration** — use the exact duration measured during transcoding instead of a file-size/bitrate estimate (previously could report wildly wrong values for files without duration metadata).
+- **Over-compression** — when a source has no duration/bitrate metadata, estimate the bitrate from the resolution instead of collapsing to the minimum bitrate.
+- **Resource handling (Android)** — keep `MediaMetadataRetriever`/`MediaExtractor` file descriptors open while reading and release the retriever (previously leaked).
+- **macOS** — fixed a build failure caused by an out-of-sync `LightCompressor.swift`.
+
 # 1.0.1
 
 - Added Swift Package Manager (SPM) support for iOS.
