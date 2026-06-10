@@ -368,6 +368,11 @@ import android.os.Looper
 import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import android.graphics.Bitmap
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.media.MediaMetadataRetriever
+import java.io.FileOutputStream
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionErrorType
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionListener
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoCompressor
@@ -422,6 +427,8 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
             "startCompression" -> handleStartCompression(call, result)
             "cancelCompression" -> VideoCompressor.cancel()
             "clearCache" -> handleClearCache(result)
+            "getMediaInfo" -> handleGetMediaInfo(call, result)
+            "getVideoThumbnail" -> handleGetVideoThumbnail(call, result)
             else -> result.notImplemented()
         }
     }
@@ -637,12 +644,150 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
 
     override fun onDetachedFromActivity() {}
 
+    // MARK: - Media info & thumbnails
+
+    private fun handleGetMediaInfo(call: MethodCall, result: Result) {
+        val path: String? = call.argument("path")
+        if (path.isNullOrEmpty()) {
+            result.error("VIDEO_NOT_FOUND", "No video path was provided.", null)
+            return
+        }
+        Thread {
+            val retriever = MediaMetadataRetriever()
+            try {
+                val file = File(path)
+                if (!file.exists()) {
+                    postError(result, "VIDEO_NOT_FOUND", "The video file was not found: $path")
+                    return@Thread
+                }
+                retriever.setDataSource(file.absolutePath)
+                val frameRate =
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
+                            ?.toDoubleOrNull()
+                    } else null
+
+                var durationMs =
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+                var bitrate =
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toIntOrNull()
+
+                // Fall back to the video track's format when the retriever does
+                // not expose duration/bitrate (some containers omit them).
+                if ((durationMs == null || durationMs <= 0L) || (bitrate == null || bitrate <= 0)) {
+                    val (trackDurationUs, trackBitrate) = readTrackDurationAndBitrate(file.absolutePath)
+                    if ((durationMs == null || durationMs <= 0L) && trackDurationUs != null && trackDurationUs > 0L) {
+                        durationMs = trackDurationUs / 1000L
+                    }
+                    if ((bitrate == null || bitrate <= 0) && trackBitrate != null && trackBitrate > 0) {
+                        bitrate = trackBitrate
+                    }
+                }
+
+                val info = mapOf(
+                    "width" to retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull(),
+                    "height" to retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull(),
+                    "durationMs" to durationMs,
+                    "fileSize" to file.length(),
+                    "bitrate" to bitrate,
+                    "rotation" to retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull(),
+                    "frameRate" to frameRate,
+                    "mimeType" to retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_MIMETYPE),
+                )
+                postSuccess(result, info)
+            } catch (e: Exception) {
+                postError(result, "MEDIA_INFO_FAILED", e.message ?: "Failed to read media info.")
+            } finally {
+                try { retriever.release() } catch (ignored: Exception) {}
+            }
+        }.start()
+    }
+
+    private fun handleGetVideoThumbnail(call: MethodCall, result: Result) {
+        val path: String? = call.argument("path")
+        if (path.isNullOrEmpty()) {
+            result.error("VIDEO_NOT_FOUND", "No video path was provided.", null)
+            return
+        }
+        val positionInMs: Int = (call.argument<Int>("positionInMs") ?: 0).coerceAtLeast(0)
+        val quality: Int = (call.argument<Int>("quality") ?: 50).coerceIn(0, 100)
+
+        Thread {
+            val retriever = MediaMetadataRetriever()
+            try {
+                val file = File(path)
+                if (!file.exists()) {
+                    postError(result, "VIDEO_NOT_FOUND", "The video file was not found: $path")
+                    return@Thread
+                }
+                retriever.setDataSource(file.absolutePath)
+                val bitmap: Bitmap? = retriever.getFrameAtTime(
+                    positionInMs * 1000L,
+                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+                )
+                if (bitmap == null) {
+                    postError(result, "THUMBNAIL_FAILED", "Could not extract a frame at ${positionInMs}ms.")
+                    return@Thread
+                }
+                val outFile = File(applicationContext.cacheDir, "thumb_${System.currentTimeMillis()}.jpg")
+                FileOutputStream(outFile).use { out ->
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+                }
+                bitmap.recycle()
+                postSuccess(result, outFile.absolutePath)
+            } catch (e: Exception) {
+                postError(result, "THUMBNAIL_FAILED", e.message ?: "Failed to generate thumbnail.")
+            } finally {
+                try { retriever.release() } catch (ignored: Exception) {}
+            }
+        }.start()
+    }
+
+    // Reads the video track's duration (microseconds) and bitrate (bps) from
+    // the container, used as a fallback when MediaMetadataRetriever does not
+    // expose them. Returns nulls when unavailable.
+    private fun readTrackDurationAndBitrate(path: String): Pair<Long?, Int?> {
+        val extractor = MediaExtractor()
+        return try {
+            extractor.setDataSource(path)
+            var durationUs: Long? = null
+            var bitrate: Int? = null
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+                if (mime.startsWith("video/")) {
+                    if (format.containsKey(MediaFormat.KEY_DURATION)) {
+                        durationUs = format.getLong(MediaFormat.KEY_DURATION)
+                    }
+                    if (format.containsKey(MediaFormat.KEY_BIT_RATE)) {
+                        bitrate = format.getInteger(MediaFormat.KEY_BIT_RATE)
+                    }
+                    break
+                }
+            }
+            Pair(durationUs, bitrate)
+        } catch (e: Exception) {
+            Pair(null, null)
+        } finally {
+            try { extractor.release() } catch (ignored: Exception) {}
+        }
+    }
+
+    private fun postSuccess(result: Result, value: Any?) {
+        Handler(Looper.getMainLooper()).post { result.success(value) }
+    }
+
+    private fun postError(result: Result, code: String, message: String) {
+        Handler(Looper.getMainLooper()).post { result.error(code, message, null) }
+    }
+
     private fun handleClearCache(result: Result) {
         try {
             val cacheDir = applicationContext.cacheDir
             if (cacheDir != null && cacheDir.isDirectory) {
                 for (file in cacheDir.listFiles() ?: emptyArray()) {
-                    if (file.name.endsWith(".mp4")) {
+                    // Compressed outputs (.mp4) and generated thumbnails (.jpg).
+                    if (file.name.endsWith(".mp4") || file.name.endsWith(".jpg")) {
                         file.delete()
                     }
                 }

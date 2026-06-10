@@ -33,3 +33,22 @@ String formatBytes(int bytes, int decimals) {
 
   return '${value.toStringAsFixed(decimals)} ${suffixes[i]}';
 }
+
+/// Formats a [Duration] as `m:ss` (or `h:mm:ss` when an hour or longer).
+///
+/// Example:
+/// ```dart
+/// formatDuration(const Duration(seconds: 66)); // '1:06'
+/// ```
+String formatDuration(Duration duration) {
+  final int totalSeconds = duration.inSeconds;
+  final int hours = totalSeconds ~/ 3600;
+  final int minutes = (totalSeconds % 3600) ~/ 60;
+  final int seconds = totalSeconds % 60;
+  final String ss = seconds.toString().padLeft(2, '0');
+  if (hours > 0) {
+    final String mm = minutes.toString().padLeft(2, '0');
+    return '$hours:$mm:$ss';
+  }
+  return '$minutes:$ss';
+}
