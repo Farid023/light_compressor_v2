@@ -79,6 +79,12 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Compressed video size in bytes, as reported by the compressor.
   int _compressedSize = 0;
 
+  /// Metadata of the selected video (Phase 2 demo).
+  MediaInfo? _mediaInfo;
+
+  /// Path to a generated preview thumbnail (Phase 2 demo).
+  String? _thumbnailPath;
+
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
@@ -158,6 +164,28 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildFileInfo() => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_thumbnailPath != null || _mediaInfo != null) ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_thumbnailPath != null)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.file(
+                      File(_thumbnailPath!),
+                      width: 120,
+                      height: 80,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                if (_mediaInfo != null) ...[
+                  const SizedBox(width: 12),
+                  Expanded(child: _buildMetadata(_mediaInfo!)),
+                ],
+              ],
+            ),
+            const SizedBox(height: 12),
+          ],
           Text(
             'Original: ${formatBytes(_originalSize > 0 ? _originalSize : File(_filePath!).lengthSync(), 2)}',
             style: const TextStyle(fontSize: 16),
@@ -175,7 +203,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 4),
             Text(
-              'Video Duration: ${_videoDuration.toStringAsFixed(2)} seconds',
+              'Video Duration: ${formatDuration(Duration(milliseconds: (_videoDuration * 1000).round()))}',
               style: const TextStyle(fontSize: 16),
             ),
             const SizedBox(height: 4),
@@ -186,6 +214,29 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ],
       );
+
+  /// Renders the [MediaInfo] fields returned by `getMediaInfo`.
+  Widget _buildMetadata(MediaInfo info) {
+    final resolution = (info.displayWidth != null && info.displayHeight != null)
+        ? '${info.displayWidth}x${info.displayHeight}'
+        : 'unknown';
+    final duration =
+        info.duration != null ? formatDuration(info.duration!) : '?';
+    final mbps = info.bitrate != null
+        ? (info.bitrate! / 1000000).toStringAsFixed(2)
+        : '?';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Resolution: $resolution', style: const TextStyle(fontSize: 13)),
+        Text('Duration: $duration', style: const TextStyle(fontSize: 13)),
+        Text('Bitrate: $mbps Mbps', style: const TextStyle(fontSize: 13)),
+        if (info.rotation != null)
+          Text('Rotation: ${info.rotation}°',
+              style: const TextStyle(fontSize: 13)),
+      ],
+    );
+  }
 
   /// Displays a circular progress indicator with percentage while
   /// compression is running.
@@ -254,7 +305,28 @@ class _HomeScreenState extends State<HomeScreen> {
       _state = _CompressionState.compressing;
       _failureMessage = null;
       _compressedPath = null;
+      _mediaInfo = null;
+      _thumbnailPath = null;
     });
+
+    // Phase 2 demo: read metadata and grab a thumbnail from the middle.
+    try {
+      final info = await _lightCompressor.getMediaInfo(_filePath!);
+      final midpointMs = (info.duration ?? Duration.zero).inMilliseconds ~/ 2;
+      final thumbnail = await _lightCompressor.getVideoThumbnail(
+        _filePath!,
+        positionInMs: midpointMs,
+        quality: 80,
+      );
+      if (mounted) {
+        setState(() {
+          _mediaInfo = info;
+          _thumbnailPath = thumbnail;
+        });
+      }
+    } catch (e) {
+      debugPrint('Metadata/thumbnail failed: $e');
+    }
 
     final videoName = 'MyVideo-${DateTime.now().millisecondsSinceEpoch}.mp4';
     final stopwatch = Stopwatch()..start();

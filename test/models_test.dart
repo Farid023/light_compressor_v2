@@ -83,4 +83,83 @@ void main() {
       expect(result.isCancelled, true);
     });
   });
+
+  group('MediaInfo', () {
+    test('fromMap parses all fields', () {
+      final info = MediaInfo.fromMap(<String, dynamic>{
+        'width': 1920,
+        'height': 1080,
+        'durationMs': 66000,
+        'fileSize': 227712771,
+        'bitrate': 27000000,
+        'rotation': 90,
+        'frameRate': 30.0,
+        'mimeType': 'video/mp4',
+      });
+
+      expect(info.width, 1920);
+      expect(info.height, 1080);
+      expect(info.duration, const Duration(milliseconds: 66000));
+      expect(info.fileSize, 227712771);
+      expect(info.bitrate, 27000000);
+      expect(info.rotation, 90);
+      expect(info.frameRate, 30.0);
+      expect(info.mimeType, 'video/mp4');
+    });
+
+    test('fromMap tolerates missing fields', () {
+      final info = MediaInfo.fromMap(<String, dynamic>{});
+      expect(info.width, isNull);
+      expect(info.height, isNull);
+      expect(info.duration, isNull);
+      expect(info.bitrate, isNull);
+      expect(info.mimeType, isNull);
+    });
+
+    test('zero duration maps to null', () {
+      final info = MediaInfo.fromMap(<String, dynamic>{'durationMs': 0});
+      expect(info.duration, isNull);
+    });
+
+    test('non-positive numeric metadata maps to null', () {
+      final info = MediaInfo.fromMap(<String, dynamic>{
+        'width': 0,
+        'height': -1,
+        'bitrate': -4,
+        'frameRate': 0.0,
+        'rotation': 0,
+      });
+      expect(info.width, isNull);
+      expect(info.height, isNull);
+      expect(info.bitrate, isNull);
+      expect(info.frameRate, isNull);
+      // rotation == 0 is valid and must be preserved.
+      expect(info.rotation, 0);
+    });
+
+    test('displayWidth/displayHeight swap on 90/270 rotation', () {
+      final rotated = MediaInfo.fromMap(<String, dynamic>{
+        'width': 1920,
+        'height': 1080,
+        'rotation': 90,
+      });
+      expect(rotated.displayWidth, 1080);
+      expect(rotated.displayHeight, 1920);
+
+      final upright = MediaInfo.fromMap(<String, dynamic>{
+        'width': 1920,
+        'height': 1080,
+        'rotation': 0,
+      });
+      expect(upright.displayWidth, 1920);
+      expect(upright.displayHeight, 1080);
+    });
+
+    test('copyWith and equality', () {
+      const a = MediaInfo(width: 100, height: 200, rotation: 0);
+      expect(a, equals(a.copyWith(height: 200)));
+      expect(a == a.copyWith(width: 999), isFalse);
+      expect(a.hashCode, a.copyWith(height: 200).hashCode);
+    });
+  });
 }

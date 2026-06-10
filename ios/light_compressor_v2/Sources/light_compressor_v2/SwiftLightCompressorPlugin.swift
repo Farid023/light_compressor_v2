@@ -32,6 +32,10 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
             compression?.cancel = true
         case "clearCache":
             clearCache(result: result)
+        case "getMediaInfo":
+            getMediaInfo(call: call, result: result)
+        case "getVideoThumbnail":
+            getVideoThumbnail(call: call, result: result)
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -173,5 +177,53 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
         } catch {
             result(FlutterError(code: "CLEAR_CACHE_FAILED", message: error.localizedDescription, details: nil))
         }
+    }
+
+    private func getMediaInfo(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any?],
+              let path = args["path"] as? String else {
+            result(FlutterError(code: "VIDEO_NOT_FOUND", message: "No video path was provided.", details: nil))
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let info = try LightCompressor.mediaInfo(for: path)
+                DispatchQueue.main.async { result(info) }
+            } catch {
+                DispatchQueue.main.async {
+                    result(Self.flutterError(from: error, fallbackCode: "MEDIA_INFO_FAILED"))
+                }
+            }
+        }
+    }
+
+    private func getVideoThumbnail(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any?],
+              let path = args["path"] as? String else {
+            result(FlutterError(code: "VIDEO_NOT_FOUND", message: "No video path was provided.", details: nil))
+            return
+        }
+        let positionInMs = (args["positionInMs"] as? Int) ?? 0
+        let quality = (args["quality"] as? Int) ?? 50
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let thumbPath = try LightCompressor.thumbnail(
+                    for: path, positionInMs: positionInMs, quality: quality)
+                DispatchQueue.main.async { result(thumbPath) }
+            } catch {
+                DispatchQueue.main.async {
+                    result(Self.flutterError(from: error, fallbackCode: "THUMBNAIL_FAILED"))
+                }
+            }
+        }
+    }
+
+    /// Maps a thrown error to a FlutterError, preferring a typed `MediaError`
+    /// code and falling back to [fallbackCode] for anything else.
+    private static func flutterError(from error: Error, fallbackCode: String) -> FlutterError {
+        if let mediaError = error as? MediaError {
+            return FlutterError(code: mediaError.code, message: mediaError.message, details: nil)
+        }
+        return FlutterError(code: fallbackCode, message: error.localizedDescription, details: nil)
     }
 }
