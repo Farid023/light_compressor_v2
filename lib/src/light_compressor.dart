@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:light_compressor_v2/light_compressor_v2.dart';
@@ -69,9 +70,15 @@ class LightCompressor {
   /// * [isMinBitrateCheckEnabled] — If `true`, the compressor checks if the source video's bitrate is above a minimum threshold (2 Mbps) before starting. If it's below the threshold, compression is skipped to prevent quality degradation. Defaults to `true`.
   ///
   /// Returns a [Result] which can be:
-  /// * [OnSuccess] containing the output destination file path.
+  /// * [OnSuccess] containing the output destination file path and statistics.
   /// * [OnFailure] containing an error message.
   /// * [OnCancelled] indicating that the compression was manually cancelled.
+  ///
+  /// Throws a [LightCompressorException] when the native side reports a
+  /// recognizable error:
+  /// * [PermissionDeniedException] — missing read/write permission.
+  /// * [UnsupportedVideoException] — unsupported format/codec or missing track.
+  /// * [VideoNotFoundException] — the source video could not be found.
   Future<Result> compressVideo({
     required String path,
     required VideoQuality videoQuality,
@@ -100,14 +107,115 @@ class LightCompressor {
     );
 
     if (response['onSuccess'] != null) {
-      return OnSuccess(response['onSuccess']);
+      final String destinationPath = response['onSuccess'] as String;
+      if (destinationPath.isEmpty) {
+        return const OnFailure(
+          'Compression reported success but returned no output path.',
+        );
+      }
+
+      final double duration = (response['duration'] as num?)?.toDouble() ?? 0.0;
+
+      // Prefer the sizes reported by the native side. The output file may live
+      // in scoped/shared storage (e.g. MediaStore on Android) whose path is not
+      // directly readable via `File`, so re-reading it in Dart is unreliable.
+      int originalSize = (response['originalSize'] as num?)?.toInt() ?? 0;
+      int compressedSize = (response['compressedSize'] as num?)?.toInt() ?? 0;
+
+      // Fallback to reading from disk when the native side did not report sizes.
+      if (originalSize <= 0) {
+        originalSize = _fileSizeOrZero(path);
+      }
+      if (compressedSize <= 0) {
+        compressedSize = _fileSizeOrZero(destinationPath);
+      }
+
+      final double ratio = originalSize > 0
+          ? ((1 - compressedSize / originalSize) * 100).clamp(0.0, 100.0)
+          : 0.0;
+
+      return OnSuccess(
+        destinationPath: destinationPath,
+        originalSize: originalSize,
+        compressedSize: compressedSize,
+        duration: duration,
+        ratio: ratio,
+      );
     } else if (response['onFailure'] != null) {
-      return OnFailure(response['onFailure']);
+      final String failureMessage = response['onFailure'] as String;
+      final String? failureType = response['failureType'] as String?;
+      final LightCompressorException? exception = _exceptionFor(
+        failureType,
+        failureMessage,
+      );
+      if (exception != null) {
+        throw exception;
+      }
+      return OnFailure(failureMessage);
     } else if (response['onCancelled'] != null) {
       return OnCancelled(isCancelled: response['onCancelled']);
     } else {
       return const OnFailure('Something went wrong');
     }
+  }
+
+  /// Maps a native failure to a typed exception.
+  ///
+  /// Prefers the structured [failureType] code reported by the native side.
+  /// Falls back to message heuristics for untyped OS-level errors (whose text
+  /// the package does not control). Returns `null` when the failure cannot be
+  /// classified, in which case an [OnFailure] is returned instead of throwing.
+  LightCompressorException? _exceptionFor(String? failureType, String message) {
+    switch (failureType) {
+      case 'permission':
+        return PermissionDeniedException(message);
+      case 'unsupported':
+        return UnsupportedVideoException(message);
+      case 'notFound':
+        return VideoNotFoundException(message);
+    }
+
+    final String lower = message.toLowerCase();
+    if (lower.contains('permission') || lower.contains('denied')) {
+      return PermissionDeniedException(message);
+    }
+    if (lower.contains('unsupported') ||
+        lower.contains('codec') ||
+        lower.contains('format') ||
+        lower.contains('track')) {
+      return UnsupportedVideoException(message);
+    }
+    if (lower.contains('not found') ||
+        lower.contains('no such file') ||
+        lower.contains('does not exist')) {
+      return VideoNotFoundException(message);
+    }
+    return null;
+  }
+
+  /// Returns the size of the file at [filePath] in bytes, or `0` if it cannot
+  /// be read (e.g. the path points to scoped storage or does not exist).
+  int _fileSizeOrZero(String filePath) {
+    try {
+      final File file = File(filePath);
+      return file.existsSync() ? file.lengthSync() : 0;
+    } on Exception catch (_) {
+      return 0;
+    }
+  }
+
+  /// Clears temporary `.mp4` files created during compression.
+  ///
+  /// Platform behavior differs:
+  /// * **Android** — deletes `.mp4` files from the app cache directory
+  ///   (temporary source copies). Compressed outputs saved to shared storage or
+  ///   app-specific storage are **not** affected.
+  /// * **iOS / macOS** — deletes all `.mp4` files in the temporary directory.
+  ///   Compressed videos are written there, so any output that has not been
+  ///   moved or saved elsewhere (e.g. via `saveInGallery`) will be removed.
+  ///   Call this only after you have copied/consumed the compressed file.
+  Future<void> clearCache() async {
+    await _channel.invokeMethod<void>('clearCache');
   }
 
   /// Call this function to cancel video compression process.

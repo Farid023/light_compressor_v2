@@ -78,9 +78,21 @@ object CompressorUtils {
             // according to https://developer.android.com/media/optimize/sharing#b-frames_and_encoding_profiles
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val type = outputFormat.getString(MediaFormat.KEY_MIME)
-                val higherLevel = getHighestCodecProfileLevel(type)
-                Log.i("Output file parameters", "Selected CodecProfileLevel: $higherLevel")
-                setInteger(MediaFormat.KEY_PROFILE, higherLevel)
+                // IMPORTANT: a profile must be paired with a compatible level, otherwise
+                // many hardware encoders (notably Qualcomm) reject configure() with
+                // error -38 and we silently fall back to Baseline. Pick a profile+level
+                // pair that the encoder actually advertises.
+                val profileLevel = getSupportedProfileLevel(type)
+                if (profileLevel != null) {
+                    Log.i(
+                        "Output file parameters",
+                        "Selected profile=${profileLevel.profile} level=${profileLevel.level}"
+                    )
+                    setInteger(MediaFormat.KEY_PROFILE, profileLevel.profile)
+                    setInteger(MediaFormat.KEY_LEVEL, profileLevel.level)
+                }
+                // If no supported pair is found we deliberately leave profile/level unset
+                // and let the encoder choose its own defaults.
             } else {
                 setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
             }
@@ -232,25 +244,46 @@ object CompressorUtils {
     /**
      * Get the highest profile level supported by the AVC encoder: High > Main > Baseline
      */
-    private fun getHighestCodecProfileLevel(type: String?): Int {
-        if (type == null) {
-            return MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline
-        }
-        val list = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
-        val capabilities = list
-            .filter { codec -> type in codec.supportedTypes && codec.name.contains("encoder") }
-            .mapNotNull { codec -> codec.getCapabilitiesForType(type) }
+    /**
+     * Finds a profile+level pair that an available encoder for [type] actually
+     * supports. Preference order is High > Main > Baseline, and within a profile
+     * the highest advertised level is chosen.
+     *
+     * Returns `null` when no encoder/capabilities are found, in which case the
+     * caller should leave the profile/level unset (the encoder picks defaults).
+     *
+     * Pairing a profile with a compatible level is required: setting
+     * [MediaFormat.KEY_PROFILE] without [MediaFormat.KEY_LEVEL] makes many
+     * hardware encoders fail `configure()` with error -38.
+     */
+    private fun getSupportedProfileLevel(type: String?): MediaCodecInfo.CodecProfileLevel? {
+        if (type == null) return null
 
-        capabilities.forEach { capabilitiesForType ->
-            val levels =  capabilitiesForType.profileLevels.map { it.profile }
-            return when {
-                MediaCodecInfo.CodecProfileLevel.AVCProfileHigh in levels -> MediaCodecInfo.CodecProfileLevel.AVCProfileHigh
-                MediaCodecInfo.CodecProfileLevel.AVCProfileMain in levels -> MediaCodecInfo.CodecProfileLevel.AVCProfileMain
-                else -> MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline
+        val capabilities = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+            .filter { codec -> codec.isEncoder && type in codec.supportedTypes }
+            .mapNotNull { codec -> runCatching { codec.getCapabilitiesForType(type) }.getOrNull() }
+
+        val preferenceOrder = listOf(
+            MediaCodecInfo.CodecProfileLevel.AVCProfileHigh,
+            MediaCodecInfo.CodecProfileLevel.AVCProfileMain,
+            MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline,
+        )
+
+        for (profile in preferenceOrder) {
+            var best: MediaCodecInfo.CodecProfileLevel? = null
+            capabilities.forEach { capabilitiesForType ->
+                capabilitiesForType.profileLevels.forEach { profileLevel ->
+                    if (profileLevel.profile == profile &&
+                        (best == null || profileLevel.level > best!!.level)
+                    ) {
+                        best = profileLevel
+                    }
+                }
             }
+            if (best != null) return best
         }
 
-        return MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline
+        return null
     }
 }
 

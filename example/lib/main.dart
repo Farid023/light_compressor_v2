@@ -67,10 +67,35 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Elapsed time of the compression process in seconds.
   int _duration = 0;
 
+  /// Original video duration.
+  double _videoDuration = 0;
+
+  /// Compression ratio.
+  double _ratio = 0;
+
+  /// Original video size in bytes, as reported by the compressor.
+  int _originalSize = 0;
+
+  /// Compressed video size in bytes, as reported by the compressor.
+  int _compressedSize = 0;
+
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
           title: const Text('Compressor Sample'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.delete_sweep),
+              tooltip: 'Clear Cache',
+              onPressed: () async {
+                await _lightCompressor.clearCache();
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Cache cleared!')),
+                );
+              },
+            ),
+          ],
         ),
         body: Padding(
           padding: const EdgeInsets.all(16),
@@ -134,19 +159,29 @@ class _HomeScreenState extends State<HomeScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Original: ${formatBytes(File(_filePath!).lengthSync(), 2)}',
+            'Original: ${formatBytes(_originalSize > 0 ? _originalSize : File(_filePath!).lengthSync(), 2)}',
             style: const TextStyle(fontSize: 16),
           ),
           if (_state == _CompressionState.done && _compressedPath != null) ...[
             const SizedBox(height: 4),
             Text(
-              'Compressed: ${formatBytes(File(_compressedPath!).lengthSync(), 2)}',
+              'Compressed: ${formatBytes(_compressedSize, 2)}',
               style: const TextStyle(fontSize: 16),
             ),
             const SizedBox(height: 4),
             Text(
-              'Duration: $_duration seconds',
+              'Compression Time: $_duration seconds',
               style: const TextStyle(fontSize: 16, color: Colors.red),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Video Duration: ${_videoDuration.toStringAsFixed(2)} seconds',
+              style: const TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Reduction: ${_ratio.toStringAsFixed(2)}%',
+              style: const TextStyle(fontSize: 16),
             ),
           ],
         ],
@@ -224,21 +259,41 @@ class _HomeScreenState extends State<HomeScreen> {
     final videoName = 'MyVideo-${DateTime.now().millisecondsSinceEpoch}.mp4';
     final stopwatch = Stopwatch()..start();
 
-    final response = await _lightCompressor.compressVideo(
-      path: _filePath!,
-      videoQuality: VideoQuality.medium,
-      isMinBitrateCheckEnabled: false,
-      video: Video(videoName: videoName),
-      android: AndroidConfig(isSharedStorage: true, saveAt: SaveAt.Movies),
-      ios: IOSConfig(saveInGallery: false),
-    );
+    Result? response;
+    String? exceptionMessage;
+
+    try {
+      response = await _lightCompressor.compressVideo(
+        path: _filePath!,
+        videoQuality: VideoQuality.medium,
+        isMinBitrateCheckEnabled: false,
+        video: Video(videoName: videoName),
+        android: AndroidConfig(isSharedStorage: true, saveAt: SaveAt.Movies),
+        ios: IOSConfig(saveInGallery: false),
+      );
+    } on PermissionDeniedException catch (e) {
+      exceptionMessage = 'Permission Denied: ${e.message}';
+    } on UnsupportedVideoException catch (e) {
+      exceptionMessage = 'Unsupported Video: ${e.message}';
+    } on VideoNotFoundException catch (e) {
+      exceptionMessage = 'Video Not Found: ${e.message}';
+    } catch (e) {
+      exceptionMessage = 'An unexpected error occurred: $e';
+    }
 
     stopwatch.stop();
     _duration = Duration(milliseconds: stopwatch.elapsedMilliseconds).inSeconds;
 
     setState(() {
-      if (response is OnSuccess) {
+      if (exceptionMessage != null) {
+        _failureMessage = exceptionMessage;
+        _state = _CompressionState.failed;
+      } else if (response is OnSuccess) {
         _compressedPath = response.destinationPath;
+        _videoDuration = response.duration;
+        _ratio = response.ratio;
+        _originalSize = response.originalSize;
+        _compressedSize = response.compressedSize;
         _state = _CompressionState.done;
       } else if (response is OnFailure) {
         _failureMessage = response.message;

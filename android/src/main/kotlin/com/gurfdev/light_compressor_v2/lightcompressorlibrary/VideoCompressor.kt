@@ -17,6 +17,7 @@ import com.gurfdev.light_compressor_v2.lightcompressorlibrary.video.Result
 import kotlinx.coroutines.*
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.IOException
 
@@ -106,62 +107,91 @@ object VideoCompressor : CoroutineScope by MainScope() {
         for (i in uris.indices) {
 
             val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
-                listener.onFailure(i, throwable.message ?: "")
+                listener.onFailure(i, throwable.message ?: "", classifyThrowable(throwable))
             }
             val coroutineScope = CoroutineScope(Job() + coroutineExceptionHandler)
 
             job = coroutineScope.launch(Dispatchers.IO) {
+                var tempSrcFile: File? = null
+                var finalDesFile: File? = null
+                var finalStreamableFile: File? = null
+                try {
+                    val job = async { getMediaPath(context, uris[i]) }
+                    val path = job.await()
 
-                val job = async { getMediaPath(context, uris[i]) }
-                val path = job.await()
+                    if (path.startsWith(context.cacheDir.path)) {
+                        tempSrcFile = File(path)
+                    }
 
-                val desFile = saveVideoFile(
-                    context,
-                    path,
-                    storageConfiguration,
-                    isStreamable,
-                    configuration.videoNames[i],
-                    shouldSave = false
-                )
-
-                if (isStreamable)
-                    streamableFile = saveVideoFile(
+                    val desFile = saveVideoFile(
                         context,
                         path,
                         storageConfiguration,
-                        null,
+                        isStreamable,
                         configuration.videoNames[i],
                         shouldSave = false
                     )
+                    finalDesFile = desFile
 
-                desFile?.let {
-                    isRunning = true
-                    listener.onStart(i)
-                    val result = startCompression(
-                        i,
-                        context,
-                        uris[i],
-                        desFile.path,
-                        streamableFile?.path,
-                        configuration,
-                        listener,
-                    )
-
-                    // Runs in Main(UI) Thread
-                    if (result.success) {
-                        val savedFile = saveVideoFile(
+                    if (isStreamable) {
+                        finalStreamableFile = saveVideoFile(
                             context,
-                            result.path,
+                            path,
                             storageConfiguration,
-                            isStreamable,
+                            null,
                             configuration.videoNames[i],
-                            shouldSave = true
+                            shouldSave = false
+                        )
+                    }
+
+                    desFile?.let {
+                        isRunning = true
+                        listener.onStart(i)
+                        val result = startCompression(
+                            i,
+                            context,
+                            uris[i],
+                            desFile.path,
+                            finalStreamableFile?.path,
+                            configuration,
+                            listener,
                         )
 
-                        listener.onSuccess(i, result.size, savedFile?.path)
-                    } else {
-                        listener.onFailure(i, result.failureMessage ?: "An error has occurred!")
+                        // Runs in Main(UI) Thread
+                        if (result.success) {
+                            val savedFile = saveVideoFile(
+                                context,
+                                result.path,
+                                storageConfiguration,
+                                isStreamable,
+                                configuration.videoNames[i],
+                                shouldSave = true
+                            )
+
+                            listener.onSuccess(i, result.size, savedFile?.path, result.duration)
+                        } else {
+                            try {
+                                if (finalDesFile?.exists() == true) finalDesFile.delete()
+                            } catch (e: Exception) {}
+                            try {
+                                if (finalStreamableFile?.exists() == true) finalStreamableFile.delete()
+                            } catch (e: Exception) {}
+
+                            listener.onFailure(i, result.failureMessage ?: "An error has occurred!", result.errorType)
+                        }
                     }
+                } catch (t: Throwable) {
+                    try {
+                        if (finalDesFile?.exists() == true) finalDesFile.delete()
+                    } catch (e: Exception) {}
+                    try {
+                        if (finalStreamableFile?.exists() == true) finalStreamableFile.delete()
+                    } catch (e: Exception) {}
+                    listener.onFailure(i, t.message ?: "An error has occurred!", classifyThrowable(t))
+                } finally {
+                    try {
+                        if (tempSrcFile?.exists() == true) tempSrcFile.delete()
+                    } catch (e: Exception) {}
                 }
             }
         }
@@ -233,8 +263,8 @@ object VideoCompressor : CoroutineScope by MainScope() {
 
         } catch (e: Exception) {
             resolver.let {
-                val filePath = (context.applicationInfo.dataDir + File.separator
-                        + System.currentTimeMillis())
+                val filePath = (context.cacheDir.path + File.separator
+                        + System.currentTimeMillis() + ".mp4")
                 val file = File(filePath)
 
                 resolver.openInputStream(uri)?.use { inputStream ->
@@ -253,6 +283,16 @@ object VideoCompressor : CoroutineScope by MainScope() {
         } finally {
             cursor?.close()
         }
+    }
+
+    /**
+     * Maps a low-level [Throwable] raised during compression onto a
+     * [CompressionErrorType] so callers can react without parsing message text.
+     */
+    private fun classifyThrowable(throwable: Throwable): CompressionErrorType = when (throwable) {
+        is SecurityException -> CompressionErrorType.PERMISSION
+        is FileNotFoundException -> CompressionErrorType.NOT_FOUND
+        else -> CompressionErrorType.UNKNOWN
     }
 
     private fun validatedFileName(name: String, isStreamable: Boolean?): String {
