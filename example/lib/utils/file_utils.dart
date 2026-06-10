@@ -28,8 +28,8 @@ String formatBytes(int bytes, int decimals) {
     'YB',
   ];
 
-  final int i = (log(bytes) / log(1024)).floor();
-  final double value = bytes / pow(1024, i);
+  final int i = (log(bytes) / log(1000)).floor();
+  final double value = bytes / pow(1000, i);
 
   return '${value.toStringAsFixed(decimals)} ${suffixes[i]}';
 }

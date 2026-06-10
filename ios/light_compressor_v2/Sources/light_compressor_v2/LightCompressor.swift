@@ -13,8 +13,8 @@ public enum VideoQuality {
 public enum CompressionResult {
     /// Compression has started.
     case onStart
-    /// Compression succeeded. Contains the video index and output URL.
-    case onSuccess(Int, URL)
+    /// Compression succeeded. Contains the video index, output URL, and video duration in seconds.
+    case onSuccess(Int, URL, Double)
     /// Compression failed. Contains the video index and error.
     case onFailure(Int, CompressionError)
     /// Compression was cancelled by the user.
@@ -29,12 +29,27 @@ public class Compression {
     public var cancel = false
 }
 
+/// Classifies a compression failure so callers can react programmatically
+/// instead of matching error message text.
+public enum CompressionErrorType: String {
+    /// Missing read/write permission.
+    case permission
+    /// Unsupported format/codec or a missing video track.
+    case unsupported
+    /// The source video could not be found.
+    case notFound
+    /// Any other, unclassified failure.
+    case unknown
+}
+
 /// Describes a compression failure.
 public struct CompressionError: LocalizedError {
     public let title: String
+    public let type: CompressionErrorType
 
-    init(title: String = "Compression Error") {
+    init(title: String = "Compression Error", type: CompressionErrorType = .unknown) {
         self.title = title
+        self.type = type
     }
 }
 
@@ -97,6 +112,20 @@ public struct LightCompressor {
 
     public init() {}
 
+    /// Deletes all `.mp4` files in the temporary directory used for compression
+    /// output. Shared by the iOS and macOS plugins.
+    ///
+    /// Note: compressed videos are written to the temporary directory, so calling
+    /// this removes any compressed file that has not been moved/saved elsewhere.
+    public static func clearCache() throws {
+        let tempDir = NSTemporaryDirectory()
+        let files = try FileManager.default.contentsOfDirectory(atPath: tempDir)
+        for file in files where file.hasSuffix(".mp4") {
+            let filePath = (tempDir as NSString).appendingPathComponent(file)
+            try FileManager.default.removeItem(atPath: filePath)
+        }
+    }
+
     // MARK: - Public API
 
     /// Compresses one or more videos sequentially.
@@ -129,7 +158,8 @@ public struct LightCompressor {
             let videoAsset = AVURLAsset(url: source)
 
             guard let videoTrack = videoAsset.tracks(withMediaType: .video).first else {
-                completion(.onFailure(index, CompressionError(title: "Cannot find video track")))
+                completion(.onFailure(index, CompressionError(
+                    title: "Cannot find video track", type: .unsupported)))
                 continue
             }
 
@@ -264,7 +294,7 @@ public struct LightCompressor {
                                         audioWriterInput.markAsFinished()
                                         videoWriter.finishWriting {
                                             DispatchQueue.main.async {
-                                                completion(.onSuccess(index, destination))
+                                                completion(.onSuccess(index, destination, durationInSeconds))
                                             }
                                         }
                                     }
@@ -273,7 +303,7 @@ public struct LightCompressor {
                         } else {
                             videoWriter.finishWriting {
                                 DispatchQueue.main.async {
-                                    completion(.onSuccess(index, destination))
+                                    completion(.onSuccess(index, destination, durationInSeconds))
                                 }
                             }
                         }

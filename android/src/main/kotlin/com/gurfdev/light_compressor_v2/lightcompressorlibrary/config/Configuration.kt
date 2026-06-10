@@ -117,10 +117,10 @@ class SharedStorageConfiguration(
                 else saveLocation
             if (shouldSave) {
                 saveVideoInExternal(context, fileName, fullPath, videoFile)
-                File(context.filesDir, fileName).delete()
+                File(context.cacheDir, fileName).delete()
                 return File("/storage/emulated/0/${fullPath}", fileName)
             }
-            return File(context.filesDir, fileName)
+            return File(context.cacheDir, fileName)
         } else {
             val savePath =
                 Environment.getExternalStoragePublicDirectory(saveLocation)

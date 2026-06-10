@@ -1,9 +1,13 @@
 package com.gurfdev.light_compressor_v2.lightcompressorlibrary.video
 
+import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionErrorType
+
 data class Result(
     val index: Int,
     val success: Boolean,
     val failureMessage: String?,
     val size: Long = 0,
     val path: String? = null,
+    val duration: Double = 0.0,
+    val errorType: CompressionErrorType = CompressionErrorType.UNKNOWN,
 )
