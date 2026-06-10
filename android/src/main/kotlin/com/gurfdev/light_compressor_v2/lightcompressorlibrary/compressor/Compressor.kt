@@ -5,6 +5,7 @@ import android.media.*
 import android.net.Uri
 import android.os.Build
 import android.util.Log
+import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionErrorType
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionProgressListener
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.config.Configuration
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.findTrack
@@ -21,6 +22,7 @@ import com.gurfdev.light_compressor_v2.lightcompressorlibrary.video.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileInputStream
 import java.nio.ByteBuffer
 
 /**
@@ -61,24 +63,64 @@ object Compressor {
             return@withContext Result(
                 index,
                 success = false,
-                failureMessage = "File does not exist or is empty (size 0). It may not have been fully copied by file_picker."
+                failureMessage = "File does not exist or is empty (size 0). It may not have been fully copied by file_picker.",
+                errorType = CompressionErrorType.NOT_FOUND
             )
         }
 
+        var fisRetriever: FileInputStream? = null
         try {
-            mediaMetadataRetriever.setDataSource(file.absolutePath)
+            fisRetriever = FileInputStream(file)
+            mediaMetadataRetriever.setDataSource(fisRetriever.fd)
         } catch (exception: Exception) {
             printException(exception)
-            return@withContext Result(
-                index,
-                success = false,
-                failureMessage = "Retriever failed: ${exception.message}"
-            )
+            // The fd-based source failed; drop it and fall back to a Uri source.
+            try { fisRetriever?.close() } catch (ignored: Exception) {}
+            fisRetriever = null
+            try {
+                mediaMetadataRetriever.setDataSource(context, srcUri)
+            } catch (inner: Exception) {
+                printException(inner)
+                try { mediaMetadataRetriever.release() } catch (ignored: Exception) {}
+                return@withContext Result(
+                    index,
+                    success = false,
+                    failureMessage = "Retriever failed: ${inner.message}",
+                    errorType = CompressionErrorType.UNSUPPORTED
+                )
+            }
         }
+        // IMPORTANT: do NOT close fisRetriever here. MediaMetadataRetriever reads
+        // the fd lazily during extractMetadata(); closing it now makes every
+        // metadata lookup return null (observed on Qualcomm/MIUI devices), which
+        // breaks duration/bitrate detection. It is closed in the finally below.
 
-        runCatching {
-            extractor.setDataSource(file.absolutePath)
+        var fisExtractor: FileInputStream? = null
+        try {
+            fisExtractor = FileInputStream(file)
+            extractor.setDataSource(fisExtractor.fd)
+        } catch (exception: Exception) {
+            printException(exception)
+            try { fisExtractor?.close() } catch (ignored: Exception) {}
+            fisExtractor = null
+            try {
+                extractor.setDataSource(context, srcUri, null)
+            } catch (inner: Exception) {
+                printException(inner)
+                try { mediaMetadataRetriever.release() } catch (ignored: Exception) {}
+                try { fisRetriever?.close() } catch (ignored: Exception) {}
+                return@withContext Result(
+                    index,
+                    success = false,
+                    failureMessage = "Extractor failed: ${inner.message}",
+                    errorType = CompressionErrorType.UNSUPPORTED
+                )
+            }
         }
+        // IMPORTANT: keep fisExtractor open for the whole compression; the
+        // extractor reads samples from this fd until start() releases it.
+
+        try {
 
         val height: Double = prepareVideoHeight(mediaMetadataRetriever)
 
@@ -96,10 +138,11 @@ object Compressor {
 
         val hasVideo = mediaMetadataRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO)
 
-        var duration = (durationData?.toDoubleOrNull()?.toLong() ?: 0L) * 1000L
+        // Duration from retriever is in milliseconds, convert to microseconds
+        var duration = (durationData?.toLongOrNull() ?: 0L) * 1000L
 
         if (duration <= 0L) {
-            // Try to extract duration from MediaExtractor if Retriever failed
+            // Try to extract duration from MediaExtractor if Retriever failed.
             val videoIndex = findTrack(extractor, true)
             if (videoIndex >= 0) {
                 val format = extractor.getTrackFormat(videoIndex)
@@ -109,11 +152,63 @@ object Compressor {
             }
         }
 
+        // Fallback: use MediaPlayer to get duration
+        if (duration <= 0L) {
+            try {
+                val mp = android.media.MediaPlayer()
+                try {
+                    val fis = FileInputStream(file)
+                    try {
+                        mp.setDataSource(fis.fd)
+                        mp.prepare()
+                        val durationMs = mp.duration // in milliseconds
+                        if (durationMs > 0) {
+                            duration = durationMs.toLong() * 1000L // to microseconds
+                        }
+                    } finally {
+                        try { fis.close() } catch (ignored: Exception) {}
+                    }
+                } finally {
+                    mp.release()
+                }
+            } catch (e: Exception) {
+                Log.w("Compressor", "MediaPlayer duration fallback failed: ${e.message}")
+            }
+        }
+
         var actualBitrate = bitrateData?.toDoubleOrNull()?.toInt() ?: 0
-        if (actualBitrate <= 0) actualBitrate = MIN_BITRATE
+
+        // Fall back to the extractor's per-track bitrate when the retriever has none.
+        if (actualBitrate <= 0) {
+            val videoIndex = findTrack(extractor, true)
+            if (videoIndex >= 0) {
+                val format = extractor.getTrackFormat(videoIndex)
+                if (format.containsKey(MediaFormat.KEY_BIT_RATE)) {
+                    actualBitrate = format.getInteger(MediaFormat.KEY_BIT_RATE)
+                }
+            }
+        }
+
+        // If bitrate is missing or unreliable, compute from file size and duration
+        if (actualBitrate <= 0 && duration > 0L) {
+            val durationSec = duration / 1000000.0
+            if (durationSec > 0) {
+                actualBitrate = ((file.length() * 8.0) / durationSec).toInt()
+                Log.i("Compressor", "Computed bitrate from file size: $actualBitrate bps (file=${file.length()} bytes, duration=${durationSec}s)")
+            }
+        }
+        if (actualBitrate <= 0) {
+            // Neither the metadata nor a duration-based computation produced a
+            // bitrate. Estimate from the source resolution instead of falling
+            // back to MIN_BITRATE, which would crush HD video to a tiny output.
+            actualBitrate = estimateBitrateFromResolution(width, height)
+        }
 
         if (duration <= 0L) {
-            // estimate duration based on file size and assumed actualBitrate
+            // Last resort: estimate duration based on file size and actualBitrate.
+            // Note: this is only used for the progress denominator; the value
+            // reported back to Dart is replaced with the exact duration measured
+            // during transcoding (see start()).
             val durationSeconds = file.length() / (actualBitrate / 8.0)
             duration = (durationSeconds * 1000000.0).toLong()
             if (duration <= 0L) duration = 1L
@@ -164,6 +259,14 @@ object Compressor {
             duration,
             rotation
         )
+
+        } finally {
+            // Release metadata resources and close the file descriptors that were
+            // kept open for lazy reads during extraction/compression.
+            try { mediaMetadataRetriever.release() } catch (ignored: Exception) {}
+            try { fisRetriever?.close() } catch (ignored: Exception) {}
+            try { fisExtractor?.close() } catch (ignored: Exception) {}
+        }
     }
 
     @Suppress("DEPRECATION")
@@ -184,6 +287,11 @@ object Compressor {
         if (newWidth != 0 && newHeight != 0) {
 
             val cacheFile = File(destination)
+
+            // Tracks the largest frame presentation time seen while transcoding.
+            // This is the ground-truth duration and is used in place of the
+            // (possibly estimated) input duration when reporting back to Dart.
+            var maxPresentationTimeUs = 0L
 
             try {
                 // MediaCodec accesses encoder and decoder components and processes the new video
@@ -385,6 +493,10 @@ object Compressor {
 
                                             inputSurface.setPresentationTime(bufferInfo.presentationTimeUs * 1000)
 
+                                            if (bufferInfo.presentationTimeUs > maxPresentationTimeUs) {
+                                                maxPresentationTimeUs = bufferInfo.presentationTimeUs
+                                            }
+
                                             val progress = (bufferInfo.presentationTimeUs.toFloat() / duration.toFloat() * 100).coerceAtMost(99f)
                                             compressionProgressListener.onProgressChanged(
                                                 id,
@@ -456,12 +568,17 @@ object Compressor {
                     printException(e)
                 }
             }
+            // Prefer the exact duration measured during transcoding; fall back to
+            // the (possibly estimated) input duration only if no frames were timed.
+            val reportedDurationUs =
+                if (maxPresentationTimeUs > 0L) maxPresentationTimeUs else duration
             return Result(
                 id,
                 success = true,
                 failureMessage = null,
                 size = resultFile.length(),
-                resultFile.path
+                path = resultFile.path,
+                duration = reportedDurationUs.toDouble() / 1000000.0
             )
         }
 
@@ -523,6 +640,23 @@ object Compressor {
                 }
             }
             extractor.unselectTrack(audioIndex)
+        }
+    }
+
+    /**
+     * Rough source-bitrate estimate (bps) based on the source resolution, used
+     * only when neither the file metadata nor a duration-based computation could
+     * provide a real bitrate. Picks a sane H.264 ballpark so that the
+     * quality-based fraction in [CompressorUtils.getBitrate] yields a reasonable
+     * output instead of the absurdly small result MIN_BITRATE would produce.
+     */
+    private fun estimateBitrateFromResolution(width: Double, height: Double): Int {
+        val pixels = width * height
+        return when {
+            pixels >= 1920 * 1080 -> 12_000_000 // 1080p+
+            pixels >= 1280 * 720 -> 6_000_000   // 720p
+            pixels >= 854 * 480 -> 3_000_000    // 480p
+            else -> MIN_BITRATE
         }
     }
 
