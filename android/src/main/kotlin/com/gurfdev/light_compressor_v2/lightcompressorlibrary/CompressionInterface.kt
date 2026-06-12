@@ -49,5 +49,4 @@ interface CompressionListener {
 
 interface CompressionProgressListener {
     fun onProgressChanged(index: Int, percent: Float)
-    fun onProgressCancelled(index: Int)
 }

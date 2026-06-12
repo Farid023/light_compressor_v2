@@ -408,11 +408,15 @@ object Compressor {
                         loop@ while (decoderOutputAvailable || encoderOutputAvailable) {
 
                             if (!isRunning) {
-                                compressionProgressListener.onProgressCancelled(id)
+                                // Signal cancellation through the result; the caller
+                                // turns this into a single onCancelled callback. We must
+                                // NOT also fire a terminal callback here, otherwise the
+                                // video reports twice (onCancelled + onFailure).
                                 return Result(
                                     id,
                                     success = false,
-                                    failureMessage = "The compression has stopped!"
+                                    failureMessage = "The compression has stopped!",
+                                    cancelled = true
                                 )
                             }
 

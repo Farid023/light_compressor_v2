@@ -441,7 +441,13 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         when (call.method) {
             "startCompression" -> handleStartCompression(call, result)
             "startBatchCompression" -> handleStartBatchCompression(call, result)
-            "cancelCompression" -> VideoCompressor.cancel()
+            "cancelCompression" -> {
+                VideoCompressor.cancel()
+                // Always reply so the Dart-side Future completes instead of
+                // hanging; the actual outcome arrives as onCancelled on the
+                // pending compression call.
+                result.success(null)
+            }
             "clearCache" -> handleClearCache(result)
             "getMediaInfo" -> handleGetMediaInfo(call, result)
             "getVideoThumbnail" -> handleGetVideoThumbnail(call, result)
@@ -528,6 +534,16 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         videoName: String,
     ) {
         val sourcePath = path
+        // A MethodChannel reply may be submitted only once. A cancelled run can
+        // surface more than one terminal callback, so collapse them to a single
+        // reply (mirrors the per-index de-dup used by batch compression) and
+        // always reply on the main thread.
+        val replied = java.util.concurrent.atomic.AtomicBoolean(false)
+        fun replyOnce(payload: Map<String, Any?>) {
+            if (replied.compareAndSet(false, true)) {
+                Handler(Looper.getMainLooper()).post { result.success(gson.toJson(payload)) }
+            }
+        }
         VideoCompressor.start(
             context = applicationContext,
             uris = listOf(Uri.fromFile(File(path))),
@@ -556,27 +572,25 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                     } catch (e: Exception) {
                         0L
                     }
-                    result.success(gson.toJson(mapOf(
+                    replyOnce(mapOf(
                         "onSuccess" to (path ?: ""),
                         "index" to index.toString(),
                         "duration" to duration,
                         "originalSize" to originalSize,
                         "compressedSize" to size
-                    )))
+                    ))
                 }
 
                 override fun onFailure(index: Int, failureMessage: String, errorType: CompressionErrorType) {
-                    result.success(gson.toJson(mapOf(
+                    replyOnce(mapOf(
                         "onFailure" to failureMessage,
                         "index" to index.toString(),
                         "failureType" to errorType.toWireValue()
-                    )))
+                    ))
                 }
 
                 override fun onCancelled(index: Int) {
-                    Handler(Looper.getMainLooper()).post {
-                        result.success(gson.toJson(mapOf("onCancelled" to true)))
-                    }
+                    replyOnce(mapOf("onCancelled" to true))
                 }
             }
         )

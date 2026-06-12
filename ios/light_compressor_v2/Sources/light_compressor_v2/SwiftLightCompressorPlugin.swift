@@ -38,6 +38,9 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
             startBatchCompression(call: call, result: result)
         case "cancelCompression":
             compression?.cancel = true
+            // Reply so the Dart-side Future completes; the outcome is delivered
+            // as onCancelled on the pending compression call.
+            result(nil)
         case "clearCache":
             clearCache(result: result)
         case "getMediaInfo":
@@ -97,6 +100,18 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
             ? CGSize(width: videoWidth!, height: videoHeight!)
             : nil
 
+        // A FlutterResult may be delivered only once. Cancellation can race with
+        // completion (onCancelled is signalled from a background queue), so funnel
+        // every terminal reply through this guard on the main thread.
+        var didReply = false
+        let replyOnce: (Any?) -> Void = { payload in
+            DispatchQueue.main.async {
+                guard !didReply else { return }
+                didReply = true
+                result(payload)
+            }
+        }
+
         compression = LightCompressor().compressVideo(
             videos: [
                 .init(
@@ -148,7 +163,7 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
                         originalSize: originalSize,
                         compressedSize: compressedSize
                     )
-                    result(response.toJson)
+                    replyOnce(response.toJson)
 
                 case .onFailure(let index, let error):
                     let response: [String: String] = [
@@ -156,11 +171,11 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
                         "index": String(index),
                         "failureType": error.type.rawValue,
                     ]
-                    result(response.toJson)
+                    replyOnce(response.toJson)
 
                 case .onCancelled:
                     let response: [String: Bool] = ["onCancelled": true]
-                    result(response.toJson)
+                    replyOnce(response.toJson)
                 }
             }
         )
@@ -282,8 +297,11 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
                     ])
 
                 case .onCancelled:
-                    // Batch compression does not cancel; index is unavailable here.
-                    break
+                    // onCancelled carries no index; mark every video that has not
+                    // finished yet as cancelled so the batch can complete.
+                    for i in 0..<count {
+                        record(i, ["onCancelled": true])
+                    }
                 }
             }
         )

@@ -28,7 +28,7 @@ enum class VideoQuality {
 
 object VideoCompressor : CoroutineScope by MainScope() {
 
-    private var job: Job? = null
+    private val jobs = mutableListOf<Job>()
 
     /**
      * This function compresses a given list of [uris] of video files and writes the compressed
@@ -91,8 +91,11 @@ object VideoCompressor : CoroutineScope by MainScope() {
      */
     @JvmStatic
     fun cancel() {
-        job?.cancel()
+        // Stop the running compressions first, then cancel every coroutine so a
+        // batch is fully halted (not just the most recently launched video).
         isRunning = false
+        jobs.forEach { it.cancel() }
+        jobs.clear()
     }
 
     private fun doVideoCompression(
@@ -104,6 +107,10 @@ object VideoCompressor : CoroutineScope by MainScope() {
         listener: CompressionListener,
     ) {
         var streamableFile: File? = null
+        // Mark the whole run active once, so concurrent videos don't each reset
+        // the flag and clobber a cancel() request mid-batch.
+        isRunning = true
+        jobs.clear()
         for (i in uris.indices) {
 
             val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
@@ -111,7 +118,7 @@ object VideoCompressor : CoroutineScope by MainScope() {
             }
             val coroutineScope = CoroutineScope(Job() + coroutineExceptionHandler)
 
-            job = coroutineScope.launch(Dispatchers.IO) {
+            jobs.add(coroutineScope.launch(Dispatchers.IO) {
                 var tempSrcFile: File? = null
                 var finalDesFile: File? = null
                 var finalStreamableFile: File? = null
@@ -145,7 +152,6 @@ object VideoCompressor : CoroutineScope by MainScope() {
                     }
 
                     desFile?.let {
-                        isRunning = true
                         listener.onStart(i)
                         val result = startCompression(
                             i,
@@ -177,7 +183,11 @@ object VideoCompressor : CoroutineScope by MainScope() {
                                 if (finalStreamableFile?.exists() == true) finalStreamableFile.delete()
                             } catch (e: Exception) {}
 
-                            listener.onFailure(i, result.failureMessage ?: "An error has occurred!", result.errorType)
+                            if (result.cancelled) {
+                                listener.onCancelled(i)
+                            } else {
+                                listener.onFailure(i, result.failureMessage ?: "An error has occurred!", result.errorType)
+                            }
                         }
                     }
                 } catch (t: Throwable) {
@@ -187,13 +197,17 @@ object VideoCompressor : CoroutineScope by MainScope() {
                     try {
                         if (finalStreamableFile?.exists() == true) finalStreamableFile.delete()
                     } catch (e: Exception) {}
-                    listener.onFailure(i, t.message ?: "An error has occurred!", classifyThrowable(t))
+                    if (t is CancellationException) {
+                        listener.onCancelled(i)
+                    } else {
+                        listener.onFailure(i, t.message ?: "An error has occurred!", classifyThrowable(t))
+                    }
                 } finally {
                     try {
                         if (tempSrcFile?.exists() == true) tempSrcFile.delete()
                     } catch (e: Exception) {}
                 }
-            }
+            })
         }
     }
 
@@ -216,10 +230,6 @@ object VideoCompressor : CoroutineScope by MainScope() {
             object : CompressionProgressListener {
                 override fun onProgressChanged(index: Int, percent: Float) {
                     listener.onProgress(index, percent)
-                }
-
-                override fun onProgressCancelled(index: Int) {
-                    listener.onCancelled(index)
                 }
             },
         )
