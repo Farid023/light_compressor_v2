@@ -29,8 +29,7 @@ class MediaInfo {
     return MediaInfo(
       width: _positiveInt(map['width']),
       height: _positiveInt(map['height']),
-      duration:
-          durationMs != null ? Duration(milliseconds: durationMs) : null,
+      duration: durationMs != null ? Duration(milliseconds: durationMs) : null,
       fileSize: _positiveInt(map['fileSize']),
       bitrate: _positiveInt(map['bitrate']),
       rotation: (map['rotation'] as num?)?.toInt(),
@@ -77,8 +76,7 @@ class MediaInfo {
   ///
   /// For videos rotated by 90° or 270°, the stored [width] and [height] are
   /// swapped relative to how the video is shown.
-  int? get displayWidth =>
-      (rotation == 90 || rotation == 270) ? height : width;
+  int? get displayWidth => (rotation == 90 || rotation == 270) ? height : width;
 
   /// The height as displayed, accounting for [rotation].
   int? get displayHeight =>
@@ -94,17 +92,16 @@ class MediaInfo {
     int? rotation,
     double? frameRate,
     String? mimeType,
-  }) =>
-      MediaInfo(
-        width: width ?? this.width,
-        height: height ?? this.height,
-        duration: duration ?? this.duration,
-        fileSize: fileSize ?? this.fileSize,
-        bitrate: bitrate ?? this.bitrate,
-        rotation: rotation ?? this.rotation,
-        frameRate: frameRate ?? this.frameRate,
-        mimeType: mimeType ?? this.mimeType,
-      );
+  }) => MediaInfo(
+    width: width ?? this.width,
+    height: height ?? this.height,
+    duration: duration ?? this.duration,
+    fileSize: fileSize ?? this.fileSize,
+    bitrate: bitrate ?? this.bitrate,
+    rotation: rotation ?? this.rotation,
+    frameRate: frameRate ?? this.frameRate,
+    mimeType: mimeType ?? this.mimeType,
+  );
 
   @override
   String toString() =>
@@ -127,13 +124,13 @@ class MediaInfo {
 
   @override
   int get hashCode => Object.hash(
-        width,
-        height,
-        duration,
-        fileSize,
-        bitrate,
-        rotation,
-        frameRate,
-        mimeType,
-      );
+    width,
+    height,
+    duration,
+    fileSize,
+    bitrate,
+    rotation,
+    frameRate,
+    mimeType,
+  );
 }

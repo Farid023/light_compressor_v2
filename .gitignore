@@ -7,6 +7,12 @@ build/
 .flutter-plugins
 .flutter-plugins-dependencies
 
+# IDE project files
+*.iml
+
+# Machine-specific Gradle config (contains local SDK paths)
+**/local.properties
+
 # macOS
 .DS_Store
 

@@ -4,6 +4,12 @@ version: 1.2.0
 repository: https://github.com/Farid023/light_compressor_v2
 issue_tracker: https://github.com/Farid023/light_compressor_v2/issues
 
+topics:
+  - video
+  - compression
+  - video-compression
+  - media
+  - compressor
 
 environment:
   sdk: ^3.11.0
