@@ -248,14 +248,12 @@ class LightCompressor {
     int quality = 50,
   }) async {
     try {
-      final String? thumbnailPath = await _channel.invokeMethod<String>(
-        'getVideoThumbnail',
-        <String, dynamic>{
-          'path': path,
-          'positionInMs': positionInMs < 0 ? 0 : positionInMs,
-          'quality': quality.clamp(0, 100),
-        },
-      );
+      final String? thumbnailPath = await _channel
+          .invokeMethod<String>('getVideoThumbnail', <String, dynamic>{
+            'path': path,
+            'positionInMs': positionInMs < 0 ? 0 : positionInMs,
+            'quality': quality.clamp(0, 100),
+          });
       if (thumbnailPath == null || thumbnailPath.isEmpty) {
         throw const ThumbnailException();
       }
@@ -276,11 +274,15 @@ class LightCompressor {
   ) {
     switch (e.code) {
       case 'PERMISSION_DENIED':
-        return PermissionDeniedException(e.message ?? _defaultPermissionMessage);
+        return PermissionDeniedException(
+          e.message ?? _defaultPermissionMessage,
+        );
       case 'VIDEO_NOT_FOUND':
         return VideoNotFoundException(e.message ?? _defaultNotFoundMessage);
       case 'UNSUPPORTED_VIDEO':
-        return UnsupportedVideoException(e.message ?? _defaultUnsupportedMessage);
+        return UnsupportedVideoException(
+          e.message ?? _defaultUnsupportedMessage,
+        );
       default:
         return fallback;
     }

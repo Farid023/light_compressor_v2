@@ -336,24 +336,35 @@ void main() {
       final info = await compressor.getMediaInfo('/path/to/input.mp4');
 
       expect(log.last.method, 'getMediaInfo');
-      expect(log.last.arguments, <String, dynamic>{'path': '/path/to/input.mp4'});
+      expect(log.last.arguments, <String, dynamic>{
+        'path': '/path/to/input.mp4',
+      });
       expect(info.width, 1920);
       expect(info.height, 1080);
       expect(info.duration, const Duration(seconds: 66));
       expect(info.mimeType, 'video/mp4');
     });
 
-    test('getMediaInfo throws VideoNotFoundException on native error', () async {
-      platformError = PlatformException(code: 'VIDEO_NOT_FOUND', message: 'missing');
+    test(
+      'getMediaInfo throws VideoNotFoundException on native error',
+      () async {
+        platformError = PlatformException(
+          code: 'VIDEO_NOT_FOUND',
+          message: 'missing',
+        );
 
-      expect(
-        () => compressor.getMediaInfo('/path/to/input.mp4'),
-        throwsA(isA<VideoNotFoundException>()),
-      );
-    });
+        expect(
+          () => compressor.getMediaInfo('/path/to/input.mp4'),
+          throwsA(isA<VideoNotFoundException>()),
+        );
+      },
+    );
 
     test('getMediaInfo throws MediaInfoException on generic error', () async {
-      platformError = PlatformException(code: 'MEDIA_INFO_FAILED', message: 'boom');
+      platformError = PlatformException(
+        code: 'MEDIA_INFO_FAILED',
+        message: 'boom',
+      );
 
       expect(
         () => compressor.getMediaInfo('/path/to/input.mp4'),
@@ -387,22 +398,31 @@ void main() {
       expect(args['quality'], 100);
     });
 
-    test('getVideoThumbnail throws ThumbnailException when native returns null', () async {
-      thumbnailResponse = null;
+    test(
+      'getVideoThumbnail throws ThumbnailException when native returns null',
+      () async {
+        thumbnailResponse = null;
 
-      expect(
-        () => compressor.getVideoThumbnail('/path/to/input.mp4'),
-        throwsA(isA<ThumbnailException>()),
-      );
-    });
+        expect(
+          () => compressor.getVideoThumbnail('/path/to/input.mp4'),
+          throwsA(isA<ThumbnailException>()),
+        );
+      },
+    );
 
-    test('getVideoThumbnail maps permission error to PermissionDeniedException', () async {
-      platformError = PlatformException(code: 'PERMISSION_DENIED', message: 'denied');
+    test(
+      'getVideoThumbnail maps permission error to PermissionDeniedException',
+      () async {
+        platformError = PlatformException(
+          code: 'PERMISSION_DENIED',
+          message: 'denied',
+        );
 
-      expect(
-        () => compressor.getVideoThumbnail('/path/to/input.mp4'),
-        throwsA(isA<PermissionDeniedException>()),
-      );
-    });
+        expect(
+          () => compressor.getVideoThumbnail('/path/to/input.mp4'),
+          throwsA(isA<PermissionDeniedException>()),
+        );
+      },
+    );
   });
 }

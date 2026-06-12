@@ -1,8 +1,31 @@
+# Files excluded from the published pub.dev package.
+# NOTE: when a .pubignore exists, pub uses it INSTEAD of .gitignore, so every
+# exclusion the package needs must be listed here.
+
 # Demo media — not needed by package consumers
 pictures/
 
 # Build artifacts
-example/android/build/
-example/ios/build/
-example/macos/build/
 build/
+
+# Example app: ship only the Dart sources; native scaffolding (icons,
+# Xcode/Gradle projects, local.properties) is noise for package consumers.
+example/android/
+example/ios/
+example/macos/
+example/build/
+
+# Machine-specific / local-only
+android/local.properties
+**/local.properties
+
+# IDE & tooling
+.idea/
+*.iml
+.metadata
+
+# macOS Finder
+.DS_Store
+
+# Internal planning notes — not part of the package
+implementation_plan.md
