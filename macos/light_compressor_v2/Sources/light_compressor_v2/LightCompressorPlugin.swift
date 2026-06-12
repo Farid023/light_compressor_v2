@@ -41,6 +41,18 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                 
                 let videoCompressor = LightCompressor()
                 
+                // A FlutterResult may be delivered only once. Cancellation can
+                // race with completion, so funnel every terminal reply through
+                // this guard on the main thread.
+                var didReply = false
+                let replyOnce: (Any?) -> Void = { payload in
+                    DispatchQueue.main.async {
+                        guard !didReply else { return }
+                        didReply = true
+                        result(payload)
+                    }
+                }
+
                 compression = videoCompressor.compressVideo(
                     videos: [.init(
                         source: URL(fileURLWithPath: path),
@@ -93,7 +105,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                                 originalSize: originalSize,
                                 compressedSize: compressedSize
                             )
-                            result(response.toJson)
+                            replyOnce(response.toJson)
                             
                         case .onStart: break
                             
@@ -103,11 +115,11 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                                 "index": String(index),
                                 "failureType": error.type.rawValue,
                             ]
-                            result(response.toJson)
+                            replyOnce(response.toJson)
                             
                         case .onCancelled:
                             let response: [String: Bool] = ["onCancelled": true]
-                            result(response.toJson)
+                            replyOnce(response.toJson)
                         }
                     }
                 )
@@ -116,6 +128,9 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
             startBatchCompression(call: call, result: result)
         case "cancelCompression":
             compression?.cancel = true
+            // Reply so the Dart-side Future completes; the outcome is delivered
+            // as onCancelled on the pending compression call.
+            result(nil)
         case "clearCache":
             clearCache(result: result)
         case "getMediaInfo":
@@ -244,7 +259,11 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                     ])
 
                 case .onCancelled:
-                    break
+                    // onCancelled carries no index; mark every video that has not
+                    // finished yet as cancelled so the batch can complete.
+                    for i in 0..<count {
+                        record(i, ["onCancelled": true])
+                    }
                 }
             }
         )

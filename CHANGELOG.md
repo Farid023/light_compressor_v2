@@ -8,6 +8,16 @@
 - **`onBatchUpdate`** — a `Stream<BatchEvent>` that emits `BatchProgress` (per-video and overall percent) and `BatchItemCompleted` (a video's result) as the batch runs, for building per-item UIs.
 - The single-video `compressVideo` and its `onProgressUpdated` stream are unchanged — batch uses a separate `compression/batch-stream` channel, so existing code is unaffected.
 
+### Changed
+
+- **`cancelCompression()` now returns `Future<void>`** instead of `Future<Map<String, dynamic>?>`. The old return type never carried a meaningful value; the cancellation outcome arrives as an `OnCancelled` result on the pending `compressVideo` / `compressVideos` call.
+
+### Fixed
+
+- **Cancelling a single compression crashed the app on Android.** Cancellation delivered two terminal callbacks for one video (`onCancelled` followed by `onFailure`) and replied twice on the same `MethodChannel.Result`, throwing `IllegalStateException: Reply already submitted`. Cancellation now yields exactly one `onCancelled`, and the single-video handler de-duplicates its reply like batch already did.
+- **`cancelCompression()` never completed.** The Android, iOS and macOS handlers did not reply to the method call, so the returned `Future` hung forever. All three platforms now reply.
+- **iOS / macOS:** the single-video handler funnels every terminal reply through one main-thread reply, so a cancel/finish race can no longer deliver two `FlutterResult`s or reply off the main thread.
+
 # 1.1.0
 
 ### New

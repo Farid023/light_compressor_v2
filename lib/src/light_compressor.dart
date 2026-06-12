@@ -430,7 +430,11 @@ class LightCompressor {
     await _channel.invokeMethod<void>('clearCache');
   }
 
-  /// Call this function to cancel video compression process.
-  Future<Map<String, dynamic>?> cancelCompression() async =>
-      jsonDecode(await _channel.invokeMethod<dynamic>('cancelCompression'));
+  /// Requests cancellation of the active video compression.
+  ///
+  /// The cancellation is reported as an [OnCancelled] result from the pending
+  /// [compressVideo] / [compressVideos] call; this method only forwards the
+  /// request to the platform and completes once it has been delivered.
+  Future<void> cancelCompression() =>
+      _channel.invokeMethod<void>('cancelCompression');
 }
