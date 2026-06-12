@@ -340,24 +340,35 @@ void main() {
       final info = await compressor.getMediaInfo('/path/to/input.mp4');
 
       expect(log.last.method, 'getMediaInfo');
-      expect(log.last.arguments, <String, dynamic>{'path': '/path/to/input.mp4'});
+      expect(log.last.arguments, <String, dynamic>{
+        'path': '/path/to/input.mp4',
+      });
       expect(info.width, 1920);
       expect(info.height, 1080);
       expect(info.duration, const Duration(seconds: 66));
       expect(info.mimeType, 'video/mp4');
     });
 
-    test('getMediaInfo throws VideoNotFoundException on native error', () async {
-      platformError = PlatformException(code: 'VIDEO_NOT_FOUND', message: 'missing');
+    test(
+      'getMediaInfo throws VideoNotFoundException on native error',
+      () async {
+        platformError = PlatformException(
+          code: 'VIDEO_NOT_FOUND',
+          message: 'missing',
+        );
 
-      expect(
-        () => compressor.getMediaInfo('/path/to/input.mp4'),
-        throwsA(isA<VideoNotFoundException>()),
-      );
-    });
+        expect(
+          () => compressor.getMediaInfo('/path/to/input.mp4'),
+          throwsA(isA<VideoNotFoundException>()),
+        );
+      },
+    );
 
     test('getMediaInfo throws MediaInfoException on generic error', () async {
-      platformError = PlatformException(code: 'MEDIA_INFO_FAILED', message: 'boom');
+      platformError = PlatformException(
+        code: 'MEDIA_INFO_FAILED',
+        message: 'boom',
+      );
 
       expect(
         () => compressor.getMediaInfo('/path/to/input.mp4'),
@@ -391,76 +402,94 @@ void main() {
       expect(args['quality'], 100);
     });
 
-    test('getVideoThumbnail throws ThumbnailException when native returns null', () async {
-      thumbnailResponse = null;
+    test(
+      'getVideoThumbnail throws ThumbnailException when native returns null',
+      () async {
+        thumbnailResponse = null;
 
-      expect(
-        () => compressor.getVideoThumbnail('/path/to/input.mp4'),
-        throwsA(isA<ThumbnailException>()),
-      );
-    });
+        expect(
+          () => compressor.getVideoThumbnail('/path/to/input.mp4'),
+          throwsA(isA<ThumbnailException>()),
+        );
+      },
+    );
 
-    test('getVideoThumbnail maps permission error to PermissionDeniedException', () async {
-      platformError = PlatformException(code: 'PERMISSION_DENIED', message: 'denied');
+    test(
+      'getVideoThumbnail maps permission error to PermissionDeniedException',
+      () async {
+        platformError = PlatformException(
+          code: 'PERMISSION_DENIED',
+          message: 'denied',
+        );
 
-      expect(
-        () => compressor.getVideoThumbnail('/path/to/input.mp4'),
-        throwsA(isA<PermissionDeniedException>()),
-      );
-    });
+        expect(
+          () => compressor.getVideoThumbnail('/path/to/input.mp4'),
+          throwsA(isA<PermissionDeniedException>()),
+        );
+      },
+    );
 
-    test('compressVideos returns ordered results and forwards arguments', () async {
-      batchResponse = <Map<String, dynamic>>[
-        {
-          'onSuccess': '/out0.mp4',
-          'originalSize': 1000,
-          'compressedSize': 400,
-          'duration': 5.0,
-        },
-        {'onFailure': 'bad codec'},
-      ];
+    test(
+      'compressVideos returns ordered results and forwards arguments',
+      () async {
+        batchResponse = <Map<String, dynamic>>[
+          {
+            'onSuccess': '/out0.mp4',
+            'originalSize': 1000,
+            'compressedSize': 400,
+            'duration': 5.0,
+          },
+          {'onFailure': 'bad codec'},
+        ];
 
-      final results = await compressor.compressVideos(
-        paths: ['/a.mp4', '/b.mp4'],
-        videoNames: ['out0.mp4', 'out1.mp4'],
-        videoQuality: VideoQuality.high,
-        android: AndroidConfig(isSharedStorage: false, saveAt: SaveAt.Pictures),
-        ios: IOSConfig(saveInGallery: true),
-        videoWidth: 1280,
-        videoHeight: 720,
-        disableAudio: true,
-      );
+        final results = await compressor.compressVideos(
+          paths: ['/a.mp4', '/b.mp4'],
+          videoNames: ['out0.mp4', 'out1.mp4'],
+          videoQuality: VideoQuality.high,
+          android: AndroidConfig(
+            isSharedStorage: false,
+            saveAt: SaveAt.Pictures,
+          ),
+          ios: IOSConfig(saveInGallery: true),
+          videoWidth: 1280,
+          videoHeight: 720,
+          disableAudio: true,
+        );
 
-      expect(log.last.method, 'startBatchCompression');
-      final args = log.last.arguments as Map<dynamic, dynamic>;
-      expect(args['paths'], ['/a.mp4', '/b.mp4']);
-      expect(args['videoNames'], ['out0.mp4', 'out1.mp4']);
-      expect(args['videoQuality'], 'high');
-      expect(args['saveAt'], 'Pictures');
-      expect(args['videoWidth'], 1280);
-      expect(args['disableAudio'], true);
+        expect(log.last.method, 'startBatchCompression');
+        final args = log.last.arguments as Map<dynamic, dynamic>;
+        expect(args['paths'], ['/a.mp4', '/b.mp4']);
+        expect(args['videoNames'], ['out0.mp4', 'out1.mp4']);
+        expect(args['videoQuality'], 'high');
+        expect(args['saveAt'], 'Pictures');
+        expect(args['videoWidth'], 1280);
+        expect(args['disableAudio'], true);
 
-      expect(results, hasLength(2));
-      expect(results[0], isA<OnSuccess>());
-      expect((results[0] as OnSuccess).ratio, 60.0);
-      expect(results[1], isA<OnFailure>());
-      expect((results[1] as OnFailure).message, 'bad codec');
-    });
+        expect(results, hasLength(2));
+        expect(results[0], isA<OnSuccess>());
+        expect((results[0] as OnSuccess).ratio, 60.0);
+        expect(results[1], isA<OnFailure>());
+        expect((results[1] as OnFailure).message, 'bad codec');
+      },
+    );
 
-    test('compressVideos returns empty list and skips channel for empty input', () async {
-      final results = await compressor.compressVideos(
-        paths: <String>[],
-        videoNames: <String>[],
-        videoQuality: VideoQuality.medium,
-        android: AndroidConfig(),
-        ios: IOSConfig(),
-      );
+    test(
+      'compressVideos returns empty list and skips channel for empty input',
+      () async {
+        final results = await compressor.compressVideos(
+          paths: <String>[],
+          videoNames: <String>[],
+          videoQuality: VideoQuality.medium,
+          android: AndroidConfig(),
+          ios: IOSConfig(),
+        );
 
-      expect(results, isEmpty);
-      expect(
-        log.where((MethodCall c) => c.method == 'startBatchCompression'),
-        isEmpty,
-      );
-    });
+        expect(results, isEmpty);
+        expect(
+          log.where((MethodCall c) => c.method == 'startBatchCompression'),
+          isEmpty,
+        );
+      },
+    );
   });
 }

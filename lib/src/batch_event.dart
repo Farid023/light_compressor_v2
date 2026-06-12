@@ -39,7 +39,7 @@ class BatchProgress extends BatchEvent {
 class BatchItemCompleted extends BatchEvent {
   /// Creates a [BatchItemCompleted] event.
   const BatchItemCompleted({required int index, required this.result})
-      : super(index);
+    : super(index);
 
   /// The outcome for this video: [OnSuccess], [OnFailure] or [OnCancelled].
   final Result result;
