@@ -100,6 +100,10 @@ class LightCompressor {
   /// Optional Parameters:
   /// * [disableAudio] — If set to `true`, the audio track will be stripped, producing a silent video. Defaults to `false`.
   /// * [isMinBitrateCheckEnabled] — If `true`, the compressor checks if the source video's bitrate is above a minimum threshold (2 Mbps) before starting. If it's below the threshold, compression is skipped to prevent quality degradation. Defaults to `true`.
+  /// * [background] — When provided, keeps the compression running while the
+  ///   app is backgrounded or the screen is off. Behaviour and guarantees vary
+  ///   per platform; see [BackgroundConfig]. Defaults to `null` (the OS may
+  ///   pause/terminate the compression once the app leaves the foreground).
   ///
   /// Returns a [Result] which can be:
   /// * [OnSuccess] containing the output destination file path and statistics.
@@ -119,6 +123,7 @@ class LightCompressor {
     required Video video,
     bool? disableAudio = false,
     bool isMinBitrateCheckEnabled = true,
+    BackgroundConfig? background,
   }) async {
     final Map<String, dynamic> response = jsonDecode(
       await _channel
@@ -135,6 +140,7 @@ class LightCompressor {
             'videoWidth': video.videoWidth,
             'videoName': video.videoName,
             'saveInGallery': ios.saveInGallery,
+            'background': background?.toMap(),
           }),
     );
 
@@ -204,6 +210,10 @@ class LightCompressor {
   ///
   /// Subscribe to [onBatchUpdate] for per-video progress and completion events
   /// as the batch runs.
+  ///
+  /// When [background] is provided the whole batch keeps running while the app
+  /// is backgrounded or the screen is off; see [BackgroundConfig] for the
+  /// per-platform behaviour and caveats.
   Future<List<Result>> compressVideos({
     required List<String> paths,
     required List<String> videoNames,
@@ -216,6 +226,7 @@ class LightCompressor {
     int? videoBitrateInMbps,
     bool disableAudio = false,
     bool isMinBitrateCheckEnabled = true,
+    BackgroundConfig? background,
   }) async {
     assert(
       paths.length == videoNames.length,
@@ -239,6 +250,7 @@ class LightCompressor {
           'videoBitrateInMbps': videoBitrateInMbps,
           'disableAudio': disableAudio,
           'isMinBitrateCheckEnabled': isMinBitrateCheckEnabled,
+          'background': background?.toMap(),
         });
 
     if (response == null) {
