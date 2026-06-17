@@ -36,6 +36,7 @@ class _BatchCompressViewState extends State<BatchCompressView>
   List<_Item> _items = <_Item>[];
   double _overall = 0;
   bool _running = false;
+  bool _runInBackground = false;
   StreamSubscription<BatchEvent>? _subscription;
 
   @override
@@ -96,6 +97,9 @@ class _BatchCompressViewState extends State<BatchCompressView>
         isMinBitrateCheckEnabled: false,
         android: AndroidConfig(isSharedStorage: true, saveAt: SaveAt.Movies),
         ios: IOSConfig(saveInGallery: false),
+        background: _runInBackground
+            ? const BackgroundConfig()
+            : null,
       );
     } catch (e) {
       debugPrint('Batch error: $e');
@@ -141,6 +145,17 @@ class _BatchCompressViewState extends State<BatchCompressView>
             onPressed: _running ? null : _pickAndCompress,
             icon: const Icon(Icons.video_library_outlined),
             label: const Text('Pick videos'),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Run in background'),
+            subtitle: const Text(
+              'Keep compressing when the app is backgrounded or the screen is off',
+            ),
+            value: _runInBackground,
+            onChanged: _running
+                ? null
+                : (value) => setState(() => _runInBackground = value),
           ),
           if (_running) ...[
             const SizedBox(height: 16),

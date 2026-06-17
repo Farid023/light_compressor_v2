@@ -91,6 +91,59 @@ void main() {
       },
     );
 
+    test('compressVideo forwards BackgroundConfig as a background map', () async {
+      mockedResponse = jsonEncode({'onSuccess': '/path/to/output.mp4'});
+
+      await compressor.compressVideo(
+        path: '/path/to/input.mp4',
+        videoQuality: VideoQuality.medium,
+        video: Video(videoName: 'output.mp4'),
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+        background: const BackgroundConfig(notificationTitle: 'Title'),
+      );
+
+      final arguments = log.first.arguments as Map<dynamic, dynamic>;
+      expect(arguments['background'], <String, dynamic>{
+        'notificationTitle': 'Title',
+      });
+    });
+
+    test('compressVideo sends a null background when not requested', () async {
+      mockedResponse = jsonEncode({'onSuccess': '/path/to/output.mp4'});
+
+      await compressor.compressVideo(
+        path: '/path/to/input.mp4',
+        videoQuality: VideoQuality.medium,
+        video: Video(videoName: 'output.mp4'),
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+      );
+
+      final arguments = log.first.arguments as Map<dynamic, dynamic>;
+      expect(arguments.containsKey('background'), isTrue);
+      expect(arguments['background'], isNull);
+    });
+
+    test('compressVideos forwards BackgroundConfig defaults', () async {
+      batchResponse = <Map<String, dynamic>>[
+        {'onSuccess': '/out0.mp4'},
+      ];
+
+      await compressor.compressVideos(
+        paths: ['/a.mp4'],
+        videoNames: ['out0.mp4'],
+        videoQuality: VideoQuality.medium,
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+        background: const BackgroundConfig(),
+      );
+
+      final arguments = log.last.arguments as Map<dynamic, dynamic>;
+      final background = arguments['background'] as Map<dynamic, dynamic>;
+      expect(background['notificationTitle'], 'Compressing video');
+    });
+
     test('compressVideo returns OnSuccess when successful', () async {
       mockedResponse = jsonEncode({
         'onSuccess': '/path/to/output.mp4',

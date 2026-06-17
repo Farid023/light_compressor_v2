@@ -497,25 +497,28 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
             AppSpecificStorageConfiguration()
         }
 
+        val background = parseBackground(call)
+        if (background != null) maybeRequestNotificationPermission()
+
         if (isSharedStorage) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 requestPermissionAndCompress33(
                     path, result, quality, isMinBitrateCheckEnabled,
                     videoBitrateInMbps, disableAudio, resizer,
-                    storageConfiguration, videoName
+                    storageConfiguration, videoName, background
                 )
             } else {
                 requestPermissionAndCompressLegacy(
                     path, result, quality, isMinBitrateCheckEnabled,
                     videoBitrateInMbps, disableAudio, resizer,
-                    storageConfiguration, videoName
+                    storageConfiguration, videoName, background
                 )
             }
         } else {
             compressVideo(
                 path, result, quality, isMinBitrateCheckEnabled,
                 videoBitrateInMbps, disableAudio, resizer,
-                storageConfiguration, videoName
+                storageConfiguration, videoName, background
             )
         }
     }
@@ -532,6 +535,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         resizer: VideoResizer?,
         storageConfiguration: StorageConfiguration,
         videoName: String,
+        background: BackgroundParams?,
     ) {
         val sourcePath = path
         // A MethodChannel reply may be submitted only once. A cancelled run can
@@ -541,8 +545,14 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         val replied = java.util.concurrent.atomic.AtomicBoolean(false)
         fun replyOnce(payload: Map<String, Any?>) {
             if (replied.compareAndSet(false, true)) {
+                if (background != null) CompressionForegroundService.stop(applicationContext)
                 Handler(Looper.getMainLooper()).post { result.success(gson.toJson(payload)) }
             }
+        }
+        if (background != null) {
+            CompressionForegroundService.start(
+                applicationContext, background.title, videoName,
+            )
         }
         VideoCompressor.start(
             context = applicationContext,
@@ -563,6 +573,11 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                 override fun onProgress(index: Int, percent: Float) {
                     Handler(Looper.getMainLooper()).post {
                         eventSink?.success(percent)
+                        if (background != null) {
+                            CompressionForegroundService.updateProgress(
+                                applicationContext, percent.toInt(), videoName,
+                            )
+                        }
                     }
                 }
 
@@ -643,6 +658,9 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
             AppSpecificStorageConfiguration()
         }
 
+        val background = parseBackground(call)
+        if (background != null) maybeRequestNotificationPermission()
+
         val count = paths.size
         val results = arrayOfNulls<Map<String, Any?>>(count)
         val percents = FloatArray(count)
@@ -661,10 +679,17 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                     event["index"] = index
                     batchEventSink?.success(event)
                     if (completed == count) {
+                        if (background != null) CompressionForegroundService.stop(applicationContext)
                         result.success(results.map { it ?: mapOf("onFailure" to "Unknown error") })
                     }
                 }
             }
+        }
+
+        if (background != null) {
+            CompressionForegroundService.start(
+                applicationContext, background.title, "0 / $count",
+            )
         }
 
         VideoCompressor.start(
@@ -693,6 +718,14 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                             "percent" to percent.toDouble(),
                             "overallPercent" to overall.toDouble()
                         ))
+                        if (background != null) {
+                            // Videos compress in parallel, so there is no single
+                            // "current" index — show a language-neutral
+                            // done/total count instead.
+                            CompressionForegroundService.updateProgress(
+                                applicationContext, overall.toInt(), "$completed / $count",
+                            )
+                        }
                     }
                 }
 
@@ -731,7 +764,8 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         path: String, result: Result, quality: VideoQuality,
         isMinBitrateCheckEnabled: Boolean, videoBitrateInMbps: Int?,
         disableAudio: Boolean, resizer: VideoResizer?,
-        storageConfiguration: StorageConfiguration, videoName: String
+        storageConfiguration: StorageConfiguration, videoName: String,
+        background: BackgroundParams?
     ) {
         if (ContextCompat.checkSelfPermission(
                 activity, Manifest.permission.READ_MEDIA_VIDEO
@@ -750,7 +784,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         }
         compressVideo(
             path, result, quality, isMinBitrateCheckEnabled,
-            videoBitrateInMbps, disableAudio, resizer, storageConfiguration, videoName
+            videoBitrateInMbps, disableAudio, resizer, storageConfiguration, videoName, background
         )
     }
 
@@ -758,7 +792,8 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         path: String, result: Result, quality: VideoQuality,
         isMinBitrateCheckEnabled: Boolean, videoBitrateInMbps: Int?,
         disableAudio: Boolean, resizer: VideoResizer?,
-        storageConfiguration: StorageConfiguration, videoName: String
+        storageConfiguration: StorageConfiguration, videoName: String,
+        background: BackgroundParams?
     ) {
         val permissions = arrayOf(
             Manifest.permission.READ_EXTERNAL_STORAGE,
@@ -769,7 +804,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         }
         compressVideo(
             path, result, quality, isMinBitrateCheckEnabled,
-            videoBitrateInMbps, disableAudio, resizer, storageConfiguration, videoName
+            videoBitrateInMbps, disableAudio, resizer, storageConfiguration, videoName, background
         )
     }
 
@@ -777,6 +812,44 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         permissions.all {
             ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
         }
+
+    // MARK: - Background execution
+
+    /** Notification content for the Android foreground service. */
+    private data class BackgroundParams(
+        val title: String,
+    )
+
+    /**
+     * Parses the optional `background` map sent from Dart. Returns `null` when
+     * background execution was not requested, in which case the compression
+     * runs in-process exactly as before.
+     */
+    private fun parseBackground(call: MethodCall): BackgroundParams? {
+        val map = call.argument<Map<String, Any?>>("background") ?: return null
+        return BackgroundParams(
+            title = (map["notificationTitle"] as? String) ?: "Compressing video",
+        )
+    }
+
+    /**
+     * Requests the POST_NOTIFICATIONS runtime permission (Android 13+) so the
+     * foreground-service notification can be shown. Best-effort and
+     * non-blocking: compression proceeds regardless of the outcome — only the
+     * notification is hidden if the user denies it.
+     */
+    private fun maybeRequestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ::activity.isInitialized &&
+            ContextCompat.checkSelfPermission(
+                activity, Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                activity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 3,
+            )
+        }
+    }
 
     // MARK: - EventChannel.StreamHandler
 

@@ -28,6 +28,7 @@ Extreme high bitrates are reduced while maintaining good video quality, resultin
 - **Thumbnail extraction** — grab a JPEG frame at any timecode via `getVideoThumbnail`.
 - **Progress streams** — real-time percentage for single (`onProgressUpdated`) and per-item + overall for batch (`onBatchUpdate`).
 - **Cancellation** — cancel any in-progress compression with a single call.
+- **Background execution** — keep compressing while the app is backgrounded or the screen is off via `BackgroundConfig` (Android foreground service; macOS App Nap suppression; not supported on iOS).
 - **Typed exceptions** — `PermissionDeniedException`, `UnsupportedVideoException`, `VideoNotFoundException`, and more — react programmatically instead of parsing strings.
 - **Minimum bitrate guard** — optionally skip compression for already-low-bitrate videos.
 - **Disable audio** — generate silent videos when audio isn't needed.
@@ -61,7 +62,7 @@ Add the dependency to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  light_compressor_v2: ^1.2.0
+  light_compressor_v2: ^1.3.0
 ```
 
 Then run:
@@ -137,6 +138,40 @@ for (final (int i, Result r) in results.indexed) {
   if (r is OnSuccess) print('Video $i → ${r.destinationPath}');
 }
 ```
+
+### Run in the background
+
+Pass a `BackgroundConfig` to keep a compression running while the app is
+backgrounded or the screen turns off. Works for both `compressVideo` and
+`compressVideos`:
+
+```dart
+final result = await compressor.compressVideo(
+  path: '/path/to/source.mp4',
+  videoQuality: VideoQuality.medium,
+  video: Video(videoName: 'compressed.mp4'),
+  android: AndroidConfig(saveAt: SaveAt.Movies),
+  ios: IOSConfig(saveInGallery: true),
+  background: const BackgroundConfig(
+    notificationTitle: 'Compressing video',
+  ),
+);
+```
+
+Platform behaviour differs significantly:
+
+- **Android** — runs under a foreground service. The ongoing notification shows
+  live progress (bar + %), elapsed time, the current file (single) or
+  a `done / total` count (batch) and a Cancel action. The title comes from
+  `BackgroundConfig`. The plugin declares the service + receiver and requests
+  `POST_NOTIFICATIONS` (Android 13+) automatically — no host-app manifest
+  changes are needed.
+- **macOS** — suppresses App Nap so the process keeps full CPU in the
+  background. The notification fields are ignored.
+- **iOS** — **not supported.** iOS suspends backgrounded apps within seconds
+  and offers no sanctioned way to keep video transcoding running, so passing a
+  `BackgroundConfig` has no effect; the compression pauses and resumes when the
+  app returns to the foreground.
 
 ### Listen to progress
 
@@ -231,6 +266,7 @@ try {
 | `video` | `Video` | ✅ | — | Output video configuration (name, resolution, bitrate). |
 | `isMinBitrateCheckEnabled` | `bool` | | `true` | Skip compression when source bitrate is below 2 Mbps. |
 | `disableAudio` | `bool?` | | `false` | Strip the audio track from the output. |
+| `background` | `BackgroundConfig?` | | `null` | Keep running while the app is backgrounded. See [`BackgroundConfig`](#backgroundconfig). |
 
 ### `compressVideos()` → `Future<List<Result>>`
 
@@ -246,6 +282,7 @@ try {
 | `videoBitrateInMbps` | `int?` | | `null` | Custom bitrate in Mbps (overrides the preset). |
 | `disableAudio` | `bool` | | `false` | Strip the audio track from every output. |
 | `isMinBitrateCheckEnabled` | `bool` | | `true` | Skip compression when source bitrate is below 2 Mbps. |
+| `background` | `BackgroundConfig?` | | `null` | Keep the whole batch running while backgrounded. See [`BackgroundConfig`](#backgroundconfig). |
 
 ### `Video`
 
@@ -269,6 +306,14 @@ try {
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `saveInGallery` | `bool` | `true` | Save the compressed video to the photo library. |
+
+### `BackgroundConfig`
+
+Opt into background execution. `notificationTitle` is the Android foreground-service notification title; iOS and macOS ignore it.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `notificationTitle` | `String` | `'Compressing video'` | Title of the Android foreground-service notification. |
 
 ### `Result` types
 
@@ -358,6 +403,8 @@ All extend `LightCompressorException` (catch the base type to handle any):
 <!-- API ≥ 33 -->
 <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
 ```
+
+**Background execution** — when you pass a `BackgroundConfig`, no manifest changes are required on your side. The plugin already declares the foreground service and the `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC` and `POST_NOTIFICATIONS` permissions, which merge into your app automatically; the `POST_NOTIFICATIONS` runtime prompt (Android 13+) is requested for you.
 
 **ProGuard** — no special ProGuard or R8 rules are required.
 
