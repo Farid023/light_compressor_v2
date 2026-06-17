@@ -35,7 +35,7 @@ Extreme high bitrates are reduced while maintaining good video quality, resultin
 ## 📸 Demo
 
 <p align="left">
-  <img src="pictures/demo.gif" alt="Demo GIF" width="300" />
+  <img src="https://raw.githubusercontent.com/Farid023/light_compressor_v2/master/pictures/demo.gif" alt="Demo GIF" width="300" />
 </p>
 
 ---

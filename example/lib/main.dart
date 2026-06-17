@@ -46,7 +46,7 @@ class _HomeScreenState extends State<HomeScreen> {
         length: 2,
         child: Scaffold(
           appBar: AppBar(
-            title: const Text('LightCompressor'),
+            title: const Text('LightCompressor v2'),
             actions: [
               IconButton(
                 icon: const Icon(Icons.delete_sweep_outlined),
