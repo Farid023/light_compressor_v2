@@ -2,8 +2,6 @@
 //  Encodable.swift
 //  light_compressor
 //
-//  Created by AbedElaziz shehadeh on 05/09/2020.
-//
 
 import Foundation
 

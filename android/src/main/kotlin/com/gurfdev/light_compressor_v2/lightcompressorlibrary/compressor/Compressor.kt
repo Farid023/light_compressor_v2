@@ -25,10 +25,6 @@ import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 
-/**
- * Created by AbedElaziz Shehadeh on 27 Jan, 2020
- * elaziz.shehadeh@gmail.com
- */
 object Compressor {
 
     // 2Mbps
