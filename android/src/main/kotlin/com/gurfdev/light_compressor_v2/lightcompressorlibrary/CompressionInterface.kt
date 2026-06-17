@@ -4,10 +4,6 @@ import androidx.annotation.MainThread
 import androidx.annotation.WorkerThread
 
 /**
- * Created by AbedElaziz Shehadeh on 27 Jan, 2020
- * elaziz.shehadeh@gmail.com
- */
-/**
  * Classifies a compression failure so callers can react programmatically
  * instead of matching error message text.
  */
@@ -49,5 +45,4 @@ interface CompressionListener {
 
 interface CompressionProgressListener {
     fun onProgressChanged(index: Int, percent: Float)
-    fun onProgressCancelled(index: Int)
 }

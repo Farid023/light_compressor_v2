@@ -10,4 +10,7 @@ data class Result(
     val path: String? = null,
     val duration: Double = 0.0,
     val errorType: CompressionErrorType = CompressionErrorType.UNKNOWN,
+    /** True when the run was stopped by [VideoCompressor.cancel], so the caller
+     *  can deliver onCancelled instead of treating it as a failure. */
+    val cancelled: Boolean = false,
 )
