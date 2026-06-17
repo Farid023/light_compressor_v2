@@ -25,10 +25,6 @@ import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 
-/**
- * Created by AbedElaziz Shehadeh on 27 Jan, 2020
- * elaziz.shehadeh@gmail.com
- */
 object Compressor {
 
     // 2Mbps
@@ -408,11 +404,15 @@ object Compressor {
                         loop@ while (decoderOutputAvailable || encoderOutputAvailable) {
 
                             if (!isRunning) {
-                                compressionProgressListener.onProgressCancelled(id)
+                                // Signal cancellation through the result; the caller
+                                // turns this into a single onCancelled callback. We must
+                                // NOT also fire a terminal callback here, otherwise the
+                                // video reports twice (onCancelled + onFailure).
                                 return Result(
                                     id,
                                     success = false,
-                                    failureMessage = "The compression has stopped!"
+                                    failureMessage = "The compression has stopped!",
+                                    cancelled = true
                                 )
                             }
 

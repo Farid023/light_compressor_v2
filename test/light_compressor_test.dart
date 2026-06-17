@@ -13,6 +13,7 @@ void main() {
     String mockedResponse = '';
     Object? mediaInfoResponse;
     Object? thumbnailResponse;
+    Object? batchResponse;
     PlatformException? platformError;
 
     setUp(() {
@@ -29,6 +30,8 @@ void main() {
                 return mediaInfoResponse;
               case 'getVideoThumbnail':
                 return thumbnailResponse;
+              case 'startBatchCompression':
+                return batchResponse;
               default:
                 return mockedResponse;
             }
@@ -39,6 +42,7 @@ void main() {
       log.clear();
       mediaInfoResponse = null;
       thumbnailResponse = null;
+      batchResponse = null;
       platformError = null;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, null);
@@ -421,6 +425,69 @@ void main() {
         expect(
           () => compressor.getVideoThumbnail('/path/to/input.mp4'),
           throwsA(isA<PermissionDeniedException>()),
+        );
+      },
+    );
+
+    test(
+      'compressVideos returns ordered results and forwards arguments',
+      () async {
+        batchResponse = <Map<String, dynamic>>[
+          {
+            'onSuccess': '/out0.mp4',
+            'originalSize': 1000,
+            'compressedSize': 400,
+            'duration': 5.0,
+          },
+          {'onFailure': 'bad codec'},
+        ];
+
+        final results = await compressor.compressVideos(
+          paths: ['/a.mp4', '/b.mp4'],
+          videoNames: ['out0.mp4', 'out1.mp4'],
+          videoQuality: VideoQuality.high,
+          android: AndroidConfig(
+            isSharedStorage: false,
+            saveAt: SaveAt.Pictures,
+          ),
+          ios: IOSConfig(saveInGallery: true),
+          videoWidth: 1280,
+          videoHeight: 720,
+          disableAudio: true,
+        );
+
+        expect(log.last.method, 'startBatchCompression');
+        final args = log.last.arguments as Map<dynamic, dynamic>;
+        expect(args['paths'], ['/a.mp4', '/b.mp4']);
+        expect(args['videoNames'], ['out0.mp4', 'out1.mp4']);
+        expect(args['videoQuality'], 'high');
+        expect(args['saveAt'], 'Pictures');
+        expect(args['videoWidth'], 1280);
+        expect(args['disableAudio'], true);
+
+        expect(results, hasLength(2));
+        expect(results[0], isA<OnSuccess>());
+        expect((results[0] as OnSuccess).ratio, 60.0);
+        expect(results[1], isA<OnFailure>());
+        expect((results[1] as OnFailure).message, 'bad codec');
+      },
+    );
+
+    test(
+      'compressVideos returns empty list and skips channel for empty input',
+      () async {
+        final results = await compressor.compressVideos(
+          paths: <String>[],
+          videoNames: <String>[],
+          videoQuality: VideoQuality.medium,
+          android: AndroidConfig(),
+          ios: IOSConfig(),
+        );
+
+        expect(results, isEmpty);
+        expect(
+          log.where((MethodCall c) => c.method == 'startBatchCompression'),
+          isEmpty,
         );
       },
     );

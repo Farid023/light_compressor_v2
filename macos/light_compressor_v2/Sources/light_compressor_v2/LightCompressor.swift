@@ -277,13 +277,13 @@ public struct LightCompressor {
     /// - Parameters:
     ///   - videos: The list of videos to compress.
     ///   - progressQueue: The queue on which `progressHandler` is called. Defaults to `.main`.
-    ///   - progressHandler: Called repeatedly with the current `Progress` object.
+    ///   - progressHandler: Called repeatedly with the video index and its current `Progress`.
     ///   - completion: Called with the `CompressionResult` for each video.
     /// - Returns: A `Compression` handle that can be used to cancel the operation.
     public func compressVideo(
         videos: [Video],
         progressQueue: DispatchQueue = .main,
-        progressHandler: ((Progress) -> Void)?,
+        progressHandler: ((Int, Progress) -> Void)?,
         completion: @escaping (CompressionResult) -> Void
     ) -> Compression {
         let compressionOperation = Compression()
@@ -398,7 +398,7 @@ public struct LightCompressor {
                     frameCount += 1
                     if let handler = progressHandler {
                         progress.completedUnitCount = Int64(frameCount)
-                        progressQueue.async { handler(progress) }
+                        progressQueue.async { handler(index, progress) }
                     }
 
                     let sampleBuffer = videoReaderOutput.copyNextSampleBuffer()
