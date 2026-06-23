@@ -1,4 +1,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.gurfdev.light_compressor_v2">
-</manifest>
 
+    <!-- Used only when a compression opts into background execution via
+         BackgroundConfig. Declared here so host apps inherit them automatically
+         through manifest merging. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application>
+        <service
+            android:name=".CompressionForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <receiver
+            android:name=".CompressionCancelReceiver"
+            android:exported="false" />
+    </application>
+</manifest>

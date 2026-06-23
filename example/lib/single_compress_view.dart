@@ -31,6 +31,7 @@ class _SingleCompressViewState extends State<SingleCompressView>
   String? _thumbnailPath;
   OnSuccess? _result;
   String? _error;
+  bool _runInBackground = false;
 
   Future<void> _pickVideo() async {
     final result = await FilePicker.platform.pickFiles(type: FileType.video);
@@ -83,6 +84,7 @@ class _SingleCompressViewState extends State<SingleCompressView>
         video: Video(videoName: videoName),
         android: AndroidConfig(isSharedStorage: true, saveAt: SaveAt.Movies),
         ios: IOSConfig(saveInGallery: false),
+        background: _runInBackground ? const BackgroundConfig() : null,
       );
       if (!mounted) return;
       setState(() {
@@ -126,6 +128,17 @@ class _SingleCompressViewState extends State<SingleCompressView>
           onPressed: _stage == _Stage.compressing ? null : _pickVideo,
           icon: const Icon(Icons.video_call_outlined),
           label: const Text('Pick a video'),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Run in background'),
+          subtitle: const Text(
+            'Keep compressing when the app is backgrounded or the screen is off',
+          ),
+          value: _runInBackground,
+          onChanged: _stage == _Stage.compressing
+              ? null
+              : (value) => setState(() => _runInBackground = value),
         ),
         if (_info != null || _thumbnailPath != null) ...[
           const SizedBox(height: 16),
