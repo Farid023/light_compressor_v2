@@ -41,6 +41,12 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                 
                 let videoCompressor = LightCompressor()
                 
+                // Suppress App Nap while the app is backgrounded when the caller
+                // opted into background execution via BackgroundConfig.
+                let background: BackgroundExecution? =
+                    (myArgs["background"] as? [String: Any]) != nil ? BackgroundExecution() : nil
+                background?.begin()
+
                 // A FlutterResult may be delivered only once. Cancellation can
                 // race with completion, so funnel every terminal reply through
                 // this guard on the main thread.
@@ -49,6 +55,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                     DispatchQueue.main.async {
                         guard !didReply else { return }
                         didReply = true
+                        background?.end()
                         result(payload)
                     }
                 }
@@ -197,6 +204,12 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
         var percents = [Double](repeating: 0, count: count)
         var completed = 0
 
+        // Suppress App Nap for the whole batch when background execution was
+        // requested via BackgroundConfig.
+        let background: BackgroundExecution? =
+            (args["background"] as? [String: Any]) != nil ? BackgroundExecution() : nil
+        background?.begin()
+
         func record(_ index: Int, _ map: [String: Any]) {
             DispatchQueue.main.async {
                 guard index >= 0, index < count, results[index] == nil else { return }
@@ -207,6 +220,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                 event["index"] = index
                 self.batchStreamHandler.eventSink?(event)
                 if completed == count {
+                    background?.end()
                     result(results.map { $0 ?? ["onFailure": "Unknown error"] })
                 }
             }
@@ -370,5 +384,25 @@ final class BatchStreamHandler: NSObject, FlutterStreamHandler {
     func onCancel(withArguments arguments: Any?) -> FlutterError? {
         eventSink = nil
         return nil
+    }
+}
+
+/// Suppresses macOS App Nap while a compression runs so the process keeps full
+/// CPU when the app is in the background. Created only when a compression opts
+/// into background execution via `BackgroundConfig`; the notification fields of
+/// that config are ignored on macOS.
+final class BackgroundExecution {
+    private var token: NSObjectProtocol?
+
+    func begin() {
+        guard token == nil else { return }
+        token = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleSystemSleepDisabled],
+            reason: "Video compression")
+    }
+
+    func end() {
+        if let token { ProcessInfo.processInfo.endActivity(token) }
+        token = nil
     }
 }

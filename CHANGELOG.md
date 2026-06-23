@@ -1,5 +1,15 @@
 # Changelog
 
+# 1.3.0
+
+### New
+
+- **Background execution** — pass an optional `BackgroundConfig` to `compressVideo` / `compressVideos` to keep a compression running while the app is backgrounded or the screen is off. Omitting it (the default) preserves the previous behaviour and is fully backwards compatible. Behaviour is platform-specific:
+  - **Android** — runs under a foreground service. Its ongoing notification shows live progress (bar + %), an elapsed-time timer, the current file name (single) or a done/total count like `2 / 5` (batch, since videos compress in parallel) and a **Cancel** action. The title comes from `BackgroundConfig`. The plugin declares the service + receiver and requests `POST_NOTIFICATIONS` (Android 13+) automatically; no host-app manifest changes are required.
+  - **macOS** — suppresses App Nap (`NSProcessInfo.beginActivity`) so the process keeps full CPU while in the background. The notification fields are ignored.
+  - **iOS** — not supported. iOS suspends backgrounded apps within seconds and offers no sanctioned way to keep video transcoding running, so passing a `BackgroundConfig` has no effect there; the compression pauses and resumes when the app returns to the foreground.
+- Example app gains a **“Run in background”** toggle in both the single and batch flows.
+
 # 1.2.0
 
 ### New

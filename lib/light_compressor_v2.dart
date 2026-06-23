@@ -1,4 +1,5 @@
 export 'src/android_config.dart';
+export 'src/background_config.dart';
 export 'src/batch_event.dart';
 export 'src/compression_result.dart';
 export 'src/exceptions.dart';
