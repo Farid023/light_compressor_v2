@@ -32,6 +32,7 @@ class _SingleCompressViewState extends State<SingleCompressView>
   OnSuccess? _result;
   String? _error;
   bool _runInBackground = false;
+  VideoFormat _videoFormat = VideoFormat.h264;
 
   Future<void> _pickVideo() async {
     final result = await FilePicker.platform.pickFiles(type: FileType.video);
@@ -84,6 +85,7 @@ class _SingleCompressViewState extends State<SingleCompressView>
         video: Video(videoName: videoName),
         android: AndroidConfig(isSharedStorage: true, saveAt: SaveAt.Movies),
         ios: IOSConfig(saveInGallery: false),
+        videoFormat: _videoFormat,
         background: _runInBackground ? const BackgroundConfig() : null,
       );
       if (!mounted) return;
@@ -139,6 +141,20 @@ class _SingleCompressViewState extends State<SingleCompressView>
           onChanged: _stage == _Stage.compressing
               ? null
               : (value) => setState(() => _runInBackground = value),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Use H.265 (HEVC)'),
+          subtitle: const Text(
+            'Smaller files where supported; falls back to H.264 otherwise',
+          ),
+          value: _videoFormat == VideoFormat.h265,
+          onChanged: _stage == _Stage.compressing
+              ? null
+              : (value) => setState(
+                  () =>
+                      _videoFormat = value ? VideoFormat.h265 : VideoFormat.h264,
+                ),
         ),
         if (_info != null || _thumbnailPath != null) ...[
           const SizedBox(height: 16),
@@ -345,6 +361,9 @@ class _ResultCard extends StatelessWidget {
               Text('Original: ${formatBytes(result.originalSize, 2)}'),
               Text('Compressed: ${formatBytes(result.compressedSize, 2)}'),
               Text('Reduction: ${result.ratio.toStringAsFixed(1)}%'),
+              Text(
+                'Codec: ${result.usedFormat == VideoFormat.h265 ? 'H.265 (HEVC)' : 'H.264 (AVC)'}',
+              ),
               Text(
                 'Duration: ${formatDuration(Duration(milliseconds: (result.duration * 1000).round()))}',
               ),

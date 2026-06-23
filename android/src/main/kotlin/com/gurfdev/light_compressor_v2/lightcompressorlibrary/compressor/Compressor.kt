@@ -7,8 +7,10 @@ import android.os.Build
 import android.util.Log
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionErrorType
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionProgressListener
+import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoFormat
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.config.Configuration
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.findTrack
+import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.isHevcHardwareEncoderAvailable
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.getBitrate
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.hasQTI
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.prepareVideoHeight
@@ -32,6 +34,8 @@ object Compressor {
 
     // H.264 Advanced Video Coding
     private const val MIME_TYPE = "video/avc"
+    // H.265 High Efficiency Video Coding
+    private const val HEVC_MIME = "video/hevc"
     private const val MEDIACODEC_TIMEOUT_DEFAULT = 100L
 
     private const val INVALID_BITRATE =
@@ -242,6 +246,15 @@ object Compressor {
             else -> rotation
         }
 
+        // Decide the output codec. H.265 is used only when the caller asked for
+        // it AND the device exposes a hardware HEVC encoder; otherwise we fall
+        // back to H.264 so compatibility is never silently broken.
+        val outputMime =
+            if (configuration.videoFormat == VideoFormat.H265 && isHevcHardwareEncoderAvailable())
+                HEVC_MIME
+            else
+                MIME_TYPE
+
         return@withContext start(
             index,
             newWidth,
@@ -253,7 +266,8 @@ object Compressor {
             extractor,
             listener,
             duration,
-            rotation
+            rotation,
+            outputMime
         )
 
         } finally {
@@ -277,7 +291,8 @@ object Compressor {
         extractor: MediaExtractor,
         compressionProgressListener: CompressionProgressListener,
         duration: Long,
-        rotation: Int
+        rotation: Int,
+        outputMime: String
     ): Result {
 
         if (newWidth != 0 && newHeight != 0) {
@@ -308,7 +323,7 @@ object Compressor {
                 val inputFormat = extractor.getTrackFormat(videoIndex)
 
                 val outputFormat: MediaFormat =
-                    MediaFormat.createVideoFormat(MIME_TYPE, newWidth, newHeight)
+                    MediaFormat.createVideoFormat(outputMime, newWidth, newHeight)
                 //set output format
                 setOutputFileParameters(
                     inputFormat,
@@ -578,7 +593,8 @@ object Compressor {
                 failureMessage = null,
                 size = resultFile.length(),
                 path = resultFile.path,
-                duration = reportedDurationUs.toDouble() / 1000000.0
+                duration = reportedDurationUs.toDouble() / 1000000.0,
+                videoFormat = if (outputMime == HEVC_MIME) "h265" else "h264"
             )
         }
 
@@ -663,10 +679,12 @@ object Compressor {
     private fun prepareEncoder(outputFormat: MediaFormat, hasQTI: Boolean): MediaCodec {
         var encoder: MediaCodec? = null
         var lastException: Exception? = null
+        // The encoder must match the codec chosen for the output format (AVC/HEVC).
+        val mime = outputFormat.getString(MediaFormat.KEY_MIME) ?: MIME_TYPE
 
         // Attempt 1: Default configuration (Hardware, Profile, CBR mode)
         try {
-            encoder = MediaCodec.createEncoderByType(MIME_TYPE)
+            encoder = MediaCodec.createEncoderByType(mime)
             encoder.configure(outputFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             return encoder
         } catch (e: Exception) {
@@ -679,7 +697,7 @@ object Compressor {
         val formatVBR = cloneFormat(outputFormat)
         formatVBR.setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
         try {
-            encoder = MediaCodec.createEncoderByType(MIME_TYPE)
+            encoder = MediaCodec.createEncoderByType(mime)
             encoder.configure(formatVBR, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             return encoder
         } catch (e: Exception) {
@@ -691,7 +709,7 @@ object Compressor {
         // Attempt 3: Remove profile level (Baseline/Default fallback, VBR mode)
         val formatNoProfile = cloneFormat(formatVBR, listOf(MediaFormat.KEY_PROFILE, MediaFormat.KEY_LEVEL))
         try {
-            encoder = MediaCodec.createEncoderByType(MIME_TYPE)
+            encoder = MediaCodec.createEncoderByType(mime)
             encoder.configure(formatNoProfile, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             return encoder
         } catch (e: Exception) {
@@ -700,8 +718,12 @@ object Compressor {
             try { encoder?.release() } catch (ignored: Exception) {}
         }
 
-        // Attempt 4: Fallback to Software Encoders (c2.android.avc.encoder or OMX.google.h264.encoder)
-        val softwareEncoderNames = listOf("c2.android.avc.encoder", "OMX.google.h264.encoder")
+        // Attempt 4: Fallback to Software Encoders (codec-specific names).
+        val softwareEncoderNames = if (mime == HEVC_MIME) {
+            listOf("c2.android.hevc.encoder", "OMX.google.hevc.encoder")
+        } else {
+            listOf("c2.android.avc.encoder", "OMX.google.h264.encoder")
+        }
         for (name in softwareEncoderNames) {
             try {
                 encoder = MediaCodec.createByCodecName(name)

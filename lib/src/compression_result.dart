@@ -1,3 +1,5 @@
+import 'package:light_compressor_v2/light_compressor_v2.dart';
+
 /// Base class for video compression results.
 abstract class Result {}
 
@@ -10,6 +12,7 @@ class OnSuccess implements Result {
     required this.compressedSize,
     required this.duration,
     required this.ratio,
+    this.usedFormat = VideoFormat.h264,
   });
 
   /// The absolute path to the successfully compressed video file.
@@ -26,6 +29,14 @@ class OnSuccess implements Result {
 
   /// The percentage of size reduction.
   final double ratio;
+
+  /// The codec actually used to encode the output.
+  ///
+  /// Normally matches the requested `videoFormat`. When [VideoFormat.h265] was
+  /// requested but the device has no HEVC encoding support, the compressor
+  /// falls back to [VideoFormat.h264] and this field reflects that real
+  /// outcome. Defaults to [VideoFormat.h264].
+  final VideoFormat usedFormat;
 }
 
 /// Represents a failed video compression attempt.

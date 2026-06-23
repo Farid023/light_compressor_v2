@@ -37,6 +37,7 @@ class _BatchCompressViewState extends State<BatchCompressView>
   double _overall = 0;
   bool _running = false;
   bool _runInBackground = false;
+  VideoFormat _videoFormat = VideoFormat.h264;
   StreamSubscription<BatchEvent>? _subscription;
 
   @override
@@ -97,6 +98,7 @@ class _BatchCompressViewState extends State<BatchCompressView>
         isMinBitrateCheckEnabled: false,
         android: AndroidConfig(isSharedStorage: true, saveAt: SaveAt.Movies),
         ios: IOSConfig(saveInGallery: false),
+        videoFormat: _videoFormat,
         background: _runInBackground
             ? const BackgroundConfig()
             : null,
@@ -156,6 +158,20 @@ class _BatchCompressViewState extends State<BatchCompressView>
             onChanged: _running
                 ? null
                 : (value) => setState(() => _runInBackground = value),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Use H.265 (HEVC)'),
+            subtitle: const Text(
+              'Smaller files where supported; falls back to H.264 otherwise',
+            ),
+            value: _videoFormat == VideoFormat.h265,
+            onChanged: _running
+                ? null
+                : (value) => setState(
+                    () => _videoFormat =
+                        value ? VideoFormat.h265 : VideoFormat.h264,
+                  ),
           ),
           if (_running) ...[
             const SizedBox(height: 16),

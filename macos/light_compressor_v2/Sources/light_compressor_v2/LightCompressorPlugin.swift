@@ -70,7 +70,8 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                             videoBitrateInMbps: videoBitrateInMbps,
                             disableAudio: disableAudio,
                             keepOriginalResolution: keepOriginalResolution,
-                            videoSize: videoWidth == nil || videoHeight == nil ? nil : CGSize(width: videoWidth!, height: videoHeight!))
+                            videoSize: videoWidth == nil || videoHeight == nil ? nil : CGSize(width: videoWidth!, height: videoHeight!),
+                            videoFormat: VideoFormat.from(wire: myArgs["videoFormat"] as? String))
                     )],
                     progressQueue: .main,
                     progressHandler: { _, progress in
@@ -86,7 +87,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                     completion: { compressionResult in
                         
                         switch compressionResult {
-                        case .onSuccess(let index, let outputURL, let duration):
+                        case .onSuccess(let index, let outputURL, let duration, let usedFormat):
                             if(saveInGallery) {
                                 DispatchQueue.main.async {
                                     PHPhotoLibrary.shared().performChanges({
@@ -104,13 +105,15 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                                 let duration: Double
                                 let originalSize: Int
                                 let compressedSize: Int
+                                let usedFormat: String
                             }
                             let response = SuccessResponse(
                                 onSuccess: outputURL.path,
                                 index: String(index),
                                 duration: duration,
                                 originalSize: originalSize,
-                                compressedSize: compressedSize
+                                compressedSize: compressedSize,
+                                usedFormat: usedFormat.wireValue
                             )
                             replyOnce(response.toJson)
                             
@@ -186,7 +189,8 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
             videoBitrateInMbps: videoBitrateInMbps,
             disableAudio: disableAudio,
             keepOriginalResolution: keepOriginalResolution,
-            videoSize: videoSize)
+            videoSize: videoSize,
+            videoFormat: VideoFormat.from(wire: args["videoFormat"] as? String))
 
         let count = paths.count
         var videos: [LightCompressor.Video] = []
@@ -247,7 +251,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                 case .onStart:
                     break
 
-                case .onSuccess(let index, let outputURL, let duration):
+                case .onSuccess(let index, let outputURL, let duration, let usedFormat):
                     if saveInGallery {
                         DispatchQueue.main.async {
                             PHPhotoLibrary.shared().performChanges {
@@ -264,6 +268,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                         "originalSize": originalSize,
                         "compressedSize": compressedSize,
                         "duration": duration,
+                        "usedFormat": usedFormat.wireValue,
                     ])
 
                 case .onFailure(let index, let error):
