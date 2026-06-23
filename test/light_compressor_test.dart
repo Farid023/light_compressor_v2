@@ -144,6 +144,89 @@ void main() {
       expect(background['notificationTitle'], 'Compressing video');
     });
 
+    test('compressVideo forwards videoFormat (defaults to h264)', () async {
+      mockedResponse = jsonEncode({'onSuccess': '/path/to/output.mp4'});
+
+      await compressor.compressVideo(
+        path: '/path/to/input.mp4',
+        videoQuality: VideoQuality.medium,
+        video: Video(videoName: 'output.mp4'),
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+      );
+
+      final arguments = log.first.arguments as Map<dynamic, dynamic>;
+      expect(arguments['videoFormat'], 'h264');
+    });
+
+    test('compressVideo forwards videoFormat h265 when requested', () async {
+      mockedResponse = jsonEncode({'onSuccess': '/path/to/output.mp4'});
+
+      await compressor.compressVideo(
+        path: '/path/to/input.mp4',
+        videoQuality: VideoQuality.medium,
+        videoFormat: VideoFormat.h265,
+        video: Video(videoName: 'output.mp4'),
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+      );
+
+      final arguments = log.first.arguments as Map<dynamic, dynamic>;
+      expect(arguments['videoFormat'], 'h265');
+    });
+
+    test('compressVideo parses usedFormat into OnSuccess', () async {
+      mockedResponse = jsonEncode({
+        'onSuccess': '/path/to/output.mp4',
+        'usedFormat': 'h265',
+      });
+
+      final result = await compressor.compressVideo(
+        path: '/path/to/input.mp4',
+        videoQuality: VideoQuality.medium,
+        videoFormat: VideoFormat.h265,
+        video: Video(videoName: 'output.mp4'),
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+      );
+
+      expect(result, isA<OnSuccess>());
+      expect((result as OnSuccess).usedFormat, VideoFormat.h265);
+    });
+
+    test('compressVideo defaults usedFormat to h264 when absent', () async {
+      mockedResponse = jsonEncode({'onSuccess': '/path/to/output.mp4'});
+
+      final result = await compressor.compressVideo(
+        path: '/path/to/input.mp4',
+        videoQuality: VideoQuality.medium,
+        video: Video(videoName: 'output.mp4'),
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+      );
+
+      expect((result as OnSuccess).usedFormat, VideoFormat.h264);
+    });
+
+    test('compressVideos forwards videoFormat and parses usedFormat', () async {
+      batchResponse = <Map<String, dynamic>>[
+        {'onSuccess': '/out0.mp4', 'usedFormat': 'h265'},
+      ];
+
+      final results = await compressor.compressVideos(
+        paths: ['/a.mp4'],
+        videoNames: ['out0.mp4'],
+        videoQuality: VideoQuality.medium,
+        videoFormat: VideoFormat.h265,
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+      );
+
+      final arguments = log.last.arguments as Map<dynamic, dynamic>;
+      expect(arguments['videoFormat'], 'h265');
+      expect((results.first as OnSuccess).usedFormat, VideoFormat.h265);
+    });
+
     test('compressVideo returns OnSuccess when successful', () async {
       mockedResponse = jsonEncode({
         'onSuccess': '/path/to/output.mp4',

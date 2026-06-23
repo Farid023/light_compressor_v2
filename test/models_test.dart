@@ -71,6 +71,20 @@ void main() {
       expect(result.compressedSize, 500);
       expect(result.duration, 10.0);
       expect(result.ratio, 50.0);
+      // Defaults to H.264 when not specified.
+      expect(result.usedFormat, VideoFormat.h264);
+    });
+
+    test('OnSuccess carries the codec actually used', () {
+      const result = OnSuccess(
+        destinationPath: '/path/to/video.mp4',
+        originalSize: 1000,
+        compressedSize: 500,
+        duration: 10.0,
+        ratio: 50.0,
+        usedFormat: VideoFormat.h265,
+      );
+      expect(result.usedFormat, VideoFormat.h265);
     });
 
     test('OnFailure contains message', () {

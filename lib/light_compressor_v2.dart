@@ -7,3 +7,4 @@ export 'src/ios_config.dart';
 export 'src/light_compressor.dart';
 export 'src/media_info.dart';
 export 'src/video.dart';
+export 'src/video_format.dart';

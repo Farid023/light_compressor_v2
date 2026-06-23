@@ -376,6 +376,7 @@ import java.io.FileOutputStream
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionErrorType
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionListener
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoCompressor
+import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoFormat
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoQuality
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.config.*
 import com.google.gson.Gson
@@ -499,26 +500,27 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
 
         val background = parseBackground(call)
         if (background != null) maybeRequestNotificationPermission()
+        val videoFormat = parseVideoFormat(call)
 
         if (isSharedStorage) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 requestPermissionAndCompress33(
                     path, result, quality, isMinBitrateCheckEnabled,
                     videoBitrateInMbps, disableAudio, resizer,
-                    storageConfiguration, videoName, background
+                    storageConfiguration, videoName, background, videoFormat
                 )
             } else {
                 requestPermissionAndCompressLegacy(
                     path, result, quality, isMinBitrateCheckEnabled,
                     videoBitrateInMbps, disableAudio, resizer,
-                    storageConfiguration, videoName, background
+                    storageConfiguration, videoName, background, videoFormat
                 )
             }
         } else {
             compressVideo(
                 path, result, quality, isMinBitrateCheckEnabled,
                 videoBitrateInMbps, disableAudio, resizer,
-                storageConfiguration, videoName, background
+                storageConfiguration, videoName, background, videoFormat
             )
         }
     }
@@ -536,6 +538,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         storageConfiguration: StorageConfiguration,
         videoName: String,
         background: BackgroundParams?,
+        videoFormat: VideoFormat,
     ) {
         val sourcePath = path
         // A MethodChannel reply may be submitted only once. A cancelled run can
@@ -566,6 +569,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                 disableAudio = disableAudio,
                 resizer = resizer,
                 videoNames = listOf(videoName),
+                videoFormat = videoFormat,
             ),
             listener = object : CompressionListener {
                 override fun onStart(index: Int) {}
@@ -581,7 +585,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                     }
                 }
 
-                override fun onSuccess(index: Int, size: Long, path: String?, duration: Double) {
+                override fun onSuccess(index: Int, size: Long, path: String?, duration: Double, videoFormat: String) {
                     val originalSize = try {
                         File(sourcePath).length()
                     } catch (e: Exception) {
@@ -592,7 +596,8 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                         "index" to index.toString(),
                         "duration" to duration,
                         "originalSize" to originalSize,
-                        "compressedSize" to size
+                        "compressedSize" to size,
+                        "usedFormat" to videoFormat
                     ))
                 }
 
@@ -704,6 +709,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                 disableAudio = disableAudio,
                 resizer = resizer,
                 videoNames = videoNames,
+                videoFormat = parseVideoFormat(call),
             ),
             listener = object : CompressionListener {
                 override fun onStart(index: Int) {}
@@ -729,7 +735,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                     }
                 }
 
-                override fun onSuccess(index: Int, size: Long, path: String?, duration: Double) {
+                override fun onSuccess(index: Int, size: Long, path: String?, duration: Double, videoFormat: String) {
                     val originalSize = try {
                         File(paths[index]).length()
                     } catch (e: Exception) {
@@ -739,7 +745,8 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                         "onSuccess" to (path ?: ""),
                         "originalSize" to originalSize,
                         "compressedSize" to size,
-                        "duration" to duration
+                        "duration" to duration,
+                        "usedFormat" to videoFormat
                     ))
                 }
 
@@ -765,7 +772,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         isMinBitrateCheckEnabled: Boolean, videoBitrateInMbps: Int?,
         disableAudio: Boolean, resizer: VideoResizer?,
         storageConfiguration: StorageConfiguration, videoName: String,
-        background: BackgroundParams?
+        background: BackgroundParams?, videoFormat: VideoFormat
     ) {
         if (ContextCompat.checkSelfPermission(
                 activity, Manifest.permission.READ_MEDIA_VIDEO
@@ -784,7 +791,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         }
         compressVideo(
             path, result, quality, isMinBitrateCheckEnabled,
-            videoBitrateInMbps, disableAudio, resizer, storageConfiguration, videoName, background
+            videoBitrateInMbps, disableAudio, resizer, storageConfiguration, videoName, background, videoFormat
         )
     }
 
@@ -793,7 +800,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         isMinBitrateCheckEnabled: Boolean, videoBitrateInMbps: Int?,
         disableAudio: Boolean, resizer: VideoResizer?,
         storageConfiguration: StorageConfiguration, videoName: String,
-        background: BackgroundParams?
+        background: BackgroundParams?, videoFormat: VideoFormat
     ) {
         val permissions = arrayOf(
             Manifest.permission.READ_EXTERNAL_STORAGE,
@@ -804,7 +811,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         }
         compressVideo(
             path, result, quality, isMinBitrateCheckEnabled,
-            videoBitrateInMbps, disableAudio, resizer, storageConfiguration, videoName, background
+            videoBitrateInMbps, disableAudio, resizer, storageConfiguration, videoName, background, videoFormat
         )
     }
 
@@ -831,6 +838,13 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
             title = (map["notificationTitle"] as? String) ?: "Compressing video",
         )
     }
+
+    /** Parses the optional `videoFormat` argument; defaults to H.264. */
+    private fun parseVideoFormat(call: MethodCall): VideoFormat =
+        when (call.argument<String>("videoFormat")) {
+            "h265" -> VideoFormat.H265
+            else -> VideoFormat.H264
+        }
 
     /**
      * Requests the POST_NOTIFICATIONS runtime permission (Android 13+) so the
