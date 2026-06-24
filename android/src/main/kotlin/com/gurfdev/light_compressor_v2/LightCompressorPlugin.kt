@@ -151,7 +151,6 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         VideoCompressor.start(
             context = applicationContext,
             uris = listOf(Uri.fromFile(File(path))),
-            isStreamable = false,
             sharedStorageConfiguration = if (isSharedStorage) SharedStorageConfiguration(
                 saveAt = when (saveAt) {
                     "Downloads" -> SaveLocation.downloads
@@ -560,7 +559,6 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         VideoCompressor.start(
             context = applicationContext,
             uris = listOf(Uri.fromFile(File(path))),
-            isStreamable = false,
             storageConfiguration = storageConfiguration,
             configureWith = Configuration(
                 quality = quality,
@@ -700,7 +698,6 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         VideoCompressor.start(
             context = applicationContext,
             uris = paths.map { Uri.fromFile(File(it)) },
-            isStreamable = false,
             storageConfiguration = storageConfiguration,
             configureWith = Configuration(
                 quality = quality,

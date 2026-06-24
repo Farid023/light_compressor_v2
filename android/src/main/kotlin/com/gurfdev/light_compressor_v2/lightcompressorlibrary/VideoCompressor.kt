@@ -47,7 +47,6 @@ object VideoCompressor : CoroutineScope by MainScope() {
      *
      * @param [context] the application context.
      * @param [uris] the list of content Uris of the video files.
-     * @param [isStreamable] determines if the output video should be prepared for streaming.
      * @param [sharedStorageConfiguration] configuration for the path directory where the compressed
      * videos will be saved, and the name of the file
      * @param [appSpecificStorageConfiguration] configuration for the path directory where the compressed
@@ -74,7 +73,6 @@ object VideoCompressor : CoroutineScope by MainScope() {
     fun start(
         context: Context,
         uris: List<Uri>,
-        isStreamable: Boolean = false,
         storageConfiguration: StorageConfiguration,
         configureWith: Configuration,
         listener: CompressionListener,
@@ -85,7 +83,6 @@ object VideoCompressor : CoroutineScope by MainScope() {
         doVideoCompression(
             context,
             uris,
-            isStreamable,
             storageConfiguration,
             configureWith,
             listener,
@@ -107,12 +104,10 @@ object VideoCompressor : CoroutineScope by MainScope() {
     private fun doVideoCompression(
         context: Context,
         uris: List<Uri>,
-        isStreamable: Boolean,
         storageConfiguration: StorageConfiguration,
         configuration: Configuration,
         listener: CompressionListener,
     ) {
-        var streamableFile: File? = null
         // Mark the whole run active once, so concurrent videos don't each reset
         // the flag and clobber a cancel() request mid-batch.
         isRunning = true
@@ -127,7 +122,6 @@ object VideoCompressor : CoroutineScope by MainScope() {
             jobs.add(coroutineScope.launch(Dispatchers.IO) {
                 var tempSrcFile: File? = null
                 var finalDesFile: File? = null
-                var finalStreamableFile: File? = null
                 try {
                     val job = async { getMediaPath(context, uris[i]) }
                     val path = job.await()
@@ -140,22 +134,10 @@ object VideoCompressor : CoroutineScope by MainScope() {
                         context,
                         path,
                         storageConfiguration,
-                        isStreamable,
                         configuration.videoNames[i],
                         shouldSave = false
                     )
                     finalDesFile = desFile
-
-                    if (isStreamable) {
-                        finalStreamableFile = saveVideoFile(
-                            context,
-                            path,
-                            storageConfiguration,
-                            null,
-                            configuration.videoNames[i],
-                            shouldSave = false
-                        )
-                    }
 
                     desFile?.let {
                         listener.onStart(i)
@@ -164,7 +146,6 @@ object VideoCompressor : CoroutineScope by MainScope() {
                             context,
                             uris[i],
                             desFile.path,
-                            finalStreamableFile?.path,
                             configuration,
                             listener,
                         )
@@ -175,7 +156,6 @@ object VideoCompressor : CoroutineScope by MainScope() {
                                 context,
                                 result.path,
                                 storageConfiguration,
-                                isStreamable,
                                 configuration.videoNames[i],
                                 shouldSave = true
                             )
@@ -184,9 +164,6 @@ object VideoCompressor : CoroutineScope by MainScope() {
                         } else {
                             try {
                                 if (finalDesFile?.exists() == true) finalDesFile.delete()
-                            } catch (e: Exception) {}
-                            try {
-                                if (finalStreamableFile?.exists() == true) finalStreamableFile.delete()
                             } catch (e: Exception) {}
 
                             if (result.cancelled) {
@@ -199,9 +176,6 @@ object VideoCompressor : CoroutineScope by MainScope() {
                 } catch (t: Throwable) {
                     try {
                         if (finalDesFile?.exists() == true) finalDesFile.delete()
-                    } catch (e: Exception) {}
-                    try {
-                        if (finalStreamableFile?.exists() == true) finalStreamableFile.delete()
                     } catch (e: Exception) {}
                     if (t is CancellationException) {
                         listener.onCancelled(i)
@@ -222,7 +196,6 @@ object VideoCompressor : CoroutineScope by MainScope() {
         context: Context,
         srcUri: Uri,
         destPath: String,
-        streamableFile: String? = null,
         configuration: Configuration,
         listener: CompressionListener,
     ): Result = withContext(Dispatchers.Default) {
@@ -231,7 +204,6 @@ object VideoCompressor : CoroutineScope by MainScope() {
             context,
             srcUri,
             destPath,
-            streamableFile,
             configuration,
             object : CompressionProgressListener {
                 override fun onProgressChanged(index: Int, percent: Float) {
@@ -245,7 +217,6 @@ object VideoCompressor : CoroutineScope by MainScope() {
         context: Context,
         filePath: String?,
         storageConfiguration: StorageConfiguration,
-        isStreamable: Boolean?,
         videoName: String,
         shouldSave: Boolean
     ): File? {
@@ -254,10 +225,7 @@ object VideoCompressor : CoroutineScope by MainScope() {
             storageConfiguration.createFileToSave(
                 context,
                 videoFile,
-                validatedFileName(
-                    videoName,
-                    isStreamable
-                ),
+                validatedFileName(videoName),
                 shouldSave
             )
         }
@@ -311,11 +279,8 @@ object VideoCompressor : CoroutineScope by MainScope() {
         else -> CompressionErrorType.UNKNOWN
     }
 
-    private fun validatedFileName(name: String, isStreamable: Boolean?): String {
-        val videoName = if (isStreamable == null || !isStreamable) name
-        else "${name}_temp"
-
-        if (!videoName.contains("mp4")) return "${videoName}.mp4"
-        return videoName
+    private fun validatedFileName(name: String): String {
+        if (!name.contains("mp4")) return "${name}.mp4"
+        return name
     }
 }

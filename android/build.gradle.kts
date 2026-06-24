@@ -12,7 +12,6 @@ rootProject.allprojects {
     }
 }
 
-// ЗАМЕНИЛИ android { НА ЭТУ СТРОКУ:
 configure<com.android.build.api.dsl.LibraryExtension> {
 
     namespace = "com.gurfdev.light_compressor_v2"

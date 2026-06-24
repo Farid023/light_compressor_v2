@@ -12,12 +12,10 @@ import com.gurfdev.light_compressor_v2.lightcompressorlibrary.config.Configurati
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.findTrack
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.isHevcHardwareEncoderAvailable
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.getBitrate
-import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.hasQTI
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.prepareVideoHeight
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.prepareVideoWidth
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.printException
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.setOutputFileParameters
-import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.StreamableVideo
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.roundDimension
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.video.*
 import kotlinx.coroutines.Dispatchers
@@ -48,7 +46,6 @@ object Compressor {
         context: Context,
         srcUri: Uri,
         destination: String,
-        streamableFile: String?,
         configuration: Configuration,
         listener: CompressionProgressListener,
     ): Result = withContext(Dispatchers.Default) {
@@ -260,7 +257,6 @@ object Compressor {
             newHeight,
             destination,
             newBitrate,
-            streamableFile,
             configuration.disableAudio,
             extractor,
             listener,
@@ -285,7 +281,6 @@ object Compressor {
         newHeight: Int,
         destination: String,
         newBitrate: Int,
-        streamableFile: String?,
         disableAudio: Boolean,
         extractor: MediaExtractor,
         compressionProgressListener: CompressionProgressListener,
@@ -303,6 +298,10 @@ object Compressor {
             // (possibly estimated) input duration when reporting back to Dart.
             var maxPresentationTimeUs = 0L
 
+            // Held outside the try so the outer finally can always release the
+            // native muxer, including on the early-return error paths below.
+            var mediaMuxerRef: MediaMuxer? = null
+
             try {
                 // MediaCodec accesses encoder and decoder components and processes the new video
                 //input to generate a compressed/smaller size video
@@ -317,6 +316,7 @@ object Compressor {
                     cacheFile.absolutePath,
                     MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4,
                 )
+                mediaMuxerRef = mediaMuxer
                 if (rotation != 0) mediaMuxer.setOrientationHint(rotation)
                 var muxerStarted = false
 
@@ -351,9 +351,7 @@ object Compressor {
                 var outputSurface: OutputSurface? = null
 
                 try {
-                    val hasQTI = hasQTI()
-
-                    encoder = prepareEncoder(outputFormat, hasQTI)
+                    encoder = prepareEncoder(outputFormat)
 
                     var inputDone = false
                     var outputDone = false
@@ -582,12 +580,8 @@ object Compressor {
                 }
 
                 extractor.release()
-                try {
-                    if (muxerStarted) mediaMuxer.stop()
-                } catch (e: Exception) {
-                    printException(e)
-                } finally {
-                    try { mediaMuxer.release() } catch (ignored: Exception) {}
+                if (muxerStarted) {
+                    try { mediaMuxer.stop() } catch (e: Exception) { printException(e) }
                 }
 
             } catch (exception: Exception) {
@@ -597,22 +591,13 @@ object Compressor {
                     success = false,
                     failureMessage = exception.message ?: "An error occurred during video compression setup"
                 )
+            } finally {
+                // Always release the native muxer — including the early-return
+                // error paths above. release() is safe whether or not start()/
+                // stop() ran.
+                try { mediaMuxerRef?.release() } catch (ignored: Exception) {}
             }
 
-            var resultFile = cacheFile
-
-            streamableFile?.let {
-                try {
-                    val result = StreamableVideo.start(`in` = cacheFile, out = File(it))
-                    resultFile = File(it)
-                    if (result && cacheFile.exists()) {
-                        cacheFile.delete()
-                    }
-
-                } catch (e: Exception) {
-                    printException(e)
-                }
-            }
             // Prefer the exact duration measured during transcoding; fall back to
             // the (possibly estimated) input duration only if no frames were timed.
             val reportedDurationUs =
@@ -621,8 +606,8 @@ object Compressor {
                 id,
                 success = true,
                 failureMessage = null,
-                size = resultFile.length(),
-                path = resultFile.path,
+                size = cacheFile.length(),
+                path = cacheFile.path,
                 duration = reportedDurationUs.toDouble() / 1000000.0,
                 videoFormat = if (outputMime == HEVC_MIME) "h265" else "h264"
             )
@@ -709,7 +694,7 @@ object Compressor {
         }
     }
 
-    private fun prepareEncoder(outputFormat: MediaFormat, hasQTI: Boolean): MediaCodec {
+    private fun prepareEncoder(outputFormat: MediaFormat): MediaCodec {
         var encoder: MediaCodec? = null
         var lastException: Exception? = null
         // The encoder must match the codec chosen for the output format (AVC/HEVC).

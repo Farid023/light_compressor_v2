@@ -8,7 +8,6 @@ import android.media.MediaMetadataRetriever
 import android.os.Build
 import android.util.Log
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoQuality
-import java.io.File
 import kotlin.math.roundToInt
 
 object CompressorUtils {
@@ -208,17 +207,6 @@ object CompressorUtils {
             width >= 960 || height >= 960 -> 0.95
             else -> 0.9
         }
-    }
-
-    fun hasQTI(): Boolean {
-        val list = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
-        for (codec in list) {
-            Log.i("CODECS: ", codec.name)
-            if (codec.name.contains("qti.avc")) {
-                return true
-            }
-        }
-        return false
     }
 
     /**

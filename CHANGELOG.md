@@ -9,6 +9,10 @@
   - **`OnSuccess.usedFormat`** — every successful result now reports the codec actually used, so you can tell whether an H.265 request was honoured or fell back to H.264.
 - Example app gains a **“Use H.265 (HEVC)”** toggle in both the single and batch flows, and the single-video result now shows the codec used.
 
+### Changed
+
+- **Android:** video muxing now uses the platform `MediaMuxer` (native H.264 **and** H.265 support) instead of a bundled mp4 writer. This removes the third-party `mp4parser` / `isoparser` dependency.
+
 # 1.3.0
 
 ### New
