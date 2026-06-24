@@ -93,7 +93,7 @@ object CompressorUtils {
                 }
                 // If no supported pair is found we deliberately leave profile/level unset
                 // and let the encoder choose its own defaults.
-            } else {
+            } else if (outputFormat.getString(MediaFormat.KEY_MIME) != "video/hevc") {
                 setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
             }
 
@@ -242,6 +242,25 @@ object CompressorUtils {
     }
 
     /**
+     * True when the device advertises a **hardware** HEVC (H.265) encoder.
+     *
+     * AOSP software HEVC encoders (`c2.android.*` / `OMX.google.*`) are excluded
+     * because they are far too slow to be practical for video compression; when
+     * only those are present the caller falls back to H.264. Vendor Codec2
+     * encoders (e.g. `c2.qti.*`, `c2.exynos.*`, `c2.mtk.*`) are hardware and pass
+     * this check.
+     */
+    fun isHevcHardwareEncoderAvailable(): Boolean =
+        runCatching {
+            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any { codec ->
+                codec.isEncoder &&
+                    "video/hevc" in codec.supportedTypes &&
+                    !codec.name.contains("google", ignoreCase = true) &&
+                    !codec.name.contains("c2.android", ignoreCase = true)
+            }
+        }.getOrDefault(false)
+
+    /**
      * Get the highest profile level supported by the AVC encoder: High > Main > Baseline
      */
     /**
@@ -263,11 +282,17 @@ object CompressorUtils {
             .filter { codec -> codec.isEncoder && type in codec.supportedTypes }
             .mapNotNull { codec -> runCatching { codec.getCapabilitiesForType(type) }.getOrNull() }
 
-        val preferenceOrder = listOf(
-            MediaCodecInfo.CodecProfileLevel.AVCProfileHigh,
-            MediaCodecInfo.CodecProfileLevel.AVCProfileMain,
-            MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline,
-        )
+        val preferenceOrder = if (type == "video/hevc") {
+            // HEVC Main covers 8-bit 4:2:0 video, which is what this surface
+            // pipeline produces.
+            listOf(MediaCodecInfo.CodecProfileLevel.HEVCProfileMain)
+        } else {
+            listOf(
+                MediaCodecInfo.CodecProfileLevel.AVCProfileHigh,
+                MediaCodecInfo.CodecProfileLevel.AVCProfileMain,
+                MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline,
+            )
+        }
 
         for (profile in preferenceOrder) {
             var best: MediaCodecInfo.CodecProfileLevel? = null

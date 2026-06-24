@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoFormat
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoQuality
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.saveVideoInExternal
 import java.io.File
@@ -16,7 +17,8 @@ data class Configuration(
     var videoBitrateInMbps: Int? = null,
     var disableAudio: Boolean = false,
     val resizer: VideoResizer? = VideoResizer.auto,
-    var videoNames: List<String>
+    var videoNames: List<String>,
+    var videoFormat: VideoFormat = VideoFormat.H264,
 ) {
     @Deprecated("Use VideoResizer to override the output video dimensions.", ReplaceWith("Configuration(quality, isMinBitrateCheckEnabled, videoBitrateInMbps, disableAudio, resizer = if (keepOriginalResolution) null else VideoResizer.auto, videoNames)"))
     constructor(

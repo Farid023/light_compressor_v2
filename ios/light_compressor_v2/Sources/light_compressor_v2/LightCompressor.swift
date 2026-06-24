@@ -10,12 +10,29 @@ public enum VideoQuality {
     case very_low
 }
 
+/// The output video codec used for compression.
+public enum VideoFormat {
+    /// H.264 / AVC — the widely compatible default.
+    case h264
+    /// H.265 / HEVC — smaller files at the same quality; requires hardware
+    /// support, otherwise the compressor falls back to `.h264`.
+    case h265
+
+    /// Lower-case wire value shared with Dart (`"h264"` / `"h265"`).
+    var wireValue: String { self == .h265 ? "h265" : "h264" }
+
+    /// Maps a Dart wire value back to a format; defaults to `.h264`.
+    static func from(wire: String?) -> VideoFormat { wire == "h265" ? .h265 : .h264 }
+}
+
 /// The result of a compression operation.
 public enum CompressionResult {
     /// Compression has started.
     case onStart
-    /// Compression succeeded. Contains the video index, output URL, and video duration in seconds.
-    case onSuccess(Int, URL, Double)
+    /// Compression succeeded. Contains the video index, output URL, video
+    /// duration in seconds, and the codec actually used (which may differ from
+    /// the requested one if H.265 fell back to H.264).
+    case onSuccess(Int, URL, Double, VideoFormat)
     /// Compression failed. Contains the video index and error.
     case onFailure(Int, CompressionError)
     /// Compression was cancelled by the user.
@@ -98,6 +115,7 @@ public struct LightCompressor {
             public let disableAudio: Bool
             public let keepOriginalResolution: Bool
             public let videoSize: CGSize?
+            public let videoFormat: VideoFormat
 
             public init(
                 quality: VideoQuality = .medium,
@@ -105,7 +123,8 @@ public struct LightCompressor {
                 videoBitrateInMbps: Int? = nil,
                 disableAudio: Bool = false,
                 keepOriginalResolution: Bool = false,
-                videoSize: CGSize? = nil
+                videoSize: CGSize? = nil,
+                videoFormat: VideoFormat = .h264
             ) {
                 self.quality = quality
                 self.isMinBitrateCheckEnabled = isMinBitrateCheckEnabled
@@ -113,6 +132,7 @@ public struct LightCompressor {
                 self.disableAudio = disableAudio
                 self.keepOriginalResolution = keepOriginalResolution
                 self.videoSize = videoSize
+                self.videoFormat = videoFormat
             }
         }
 
@@ -333,13 +353,19 @@ public struct LightCompressor {
             let totalFrames       = ceil(durationInSeconds * Double(frameRate))
             let progress          = Progress(totalUnitCount: Int64(totalFrames))
 
+            // Resolve the output codec: use H.265 only when requested AND the
+            // device supports HEVC encoding; otherwise fall back to H.264.
+            let resolvedFormat: VideoFormat =
+                (configuration.videoFormat == .h265 && Self.isHEVCEncodingSupported()) ? .h265 : .h264
+
             // Video writer
             let videoWriterInput = AVAssetWriterInput(
                 mediaType: .video,
                 outputSettings: getVideoWriterSettings(
                     bitrate: newBitrate,
                     width: size.width,
-                    height: size.height))
+                    height: size.height,
+                    format: resolvedFormat))
             videoWriterInput.expectsMediaDataInRealTime = true
             videoWriterInput.transform = videoTrack.preferredTransform
 
@@ -438,7 +464,7 @@ public struct LightCompressor {
                                         audioWriterInput.markAsFinished()
                                         videoWriter.finishWriting {
                                             DispatchQueue.main.async {
-                                                completion(.onSuccess(index, destination, durationInSeconds))
+                                                completion(.onSuccess(index, destination, durationInSeconds, resolvedFormat))
                                             }
                                         }
                                     }
@@ -447,7 +473,7 @@ public struct LightCompressor {
                         } else {
                             videoWriter.finishWriting {
                                 DispatchQueue.main.async {
-                                    completion(.onSuccess(index, destination, durationInSeconds))
+                                    completion(.onSuccess(index, destination, durationInSeconds, resolvedFormat))
                                 }
                             }
                         }
@@ -505,12 +531,20 @@ public struct LightCompressor {
         return (newWidth, newHeight)
     }
 
-    private func getVideoWriterSettings(bitrate: Int, width: Int, height: Int) -> [String: AnyObject] {
+    /// Whether this device supports hardware HEVC (H.265) **encoding**. The
+    /// platform's advertised export presets include the HEVC presets only when
+    /// an HEVC encoder is available, which makes this a reliable capability probe.
+    private static func isHEVCEncodingSupported() -> Bool {
+        AVAssetExportSession.allExportPresets().contains(AVAssetExportPresetHEVCHighestQuality)
+    }
+
+    private func getVideoWriterSettings(bitrate: Int, width: Int, height: Int, format: VideoFormat) -> [String: AnyObject] {
         let compressionSettings: [String: AnyObject] = [
             AVVideoAverageBitRateKey: bitrate as AnyObject
         ]
+        let codec: AVVideoCodecType = (format == .h265) ? .hevc : .h264
         return [
-            AVVideoCodecKey:                  AVVideoCodecType.h264 as AnyObject,
+            AVVideoCodecKey:                  codec as AnyObject,
             AVVideoCompressionPropertiesKey:  compressionSettings as AnyObject,
             AVVideoWidthKey:                  width  as AnyObject,
             AVVideoHeightKey:                 height as AnyObject,

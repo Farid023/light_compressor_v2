@@ -100,6 +100,11 @@ class LightCompressor {
   /// Optional Parameters:
   /// * [disableAudio] — If set to `true`, the audio track will be stripped, producing a silent video. Defaults to `false`.
   /// * [isMinBitrateCheckEnabled] — If `true`, the compressor checks if the source video's bitrate is above a minimum threshold (2 Mbps) before starting. If it's below the threshold, compression is skipped to prevent quality degradation. Defaults to `true`.
+  /// * [videoFormat] — The output codec. Defaults to [VideoFormat.h264].
+  ///   Requesting [VideoFormat.h265] (HEVC) yields smaller files but requires
+  ///   hardware support; on devices without it the compressor automatically
+  ///   falls back to H.264. The format actually used is reported by
+  ///   [OnSuccess.usedFormat].
   /// * [background] — When provided, keeps the compression running while the
   ///   app is backgrounded or the screen is off. Behaviour and guarantees vary
   ///   per platform; see [BackgroundConfig]. Defaults to `null` (the OS may
@@ -123,6 +128,7 @@ class LightCompressor {
     required Video video,
     bool? disableAudio = false,
     bool isMinBitrateCheckEnabled = true,
+    VideoFormat videoFormat = VideoFormat.h264,
     BackgroundConfig? background,
   }) async {
     final Map<String, dynamic> response = jsonDecode(
@@ -140,6 +146,7 @@ class LightCompressor {
             'videoWidth': video.videoWidth,
             'videoName': video.videoName,
             'saveInGallery': ios.saveInGallery,
+            'videoFormat': videoFormat.name,
             'background': background?.toMap(),
           }),
     );
@@ -178,6 +185,7 @@ class LightCompressor {
         compressedSize: compressedSize,
         duration: duration,
         ratio: ratio,
+        usedFormat: _videoFormatFromWire(response['usedFormat'] as String?),
       );
     } else if (response['onFailure'] != null) {
       final String failureMessage = response['onFailure'] as String;
@@ -211,6 +219,9 @@ class LightCompressor {
   /// Subscribe to [onBatchUpdate] for per-video progress and completion events
   /// as the batch runs.
   ///
+  /// [videoFormat] selects the output codec for every video (defaults to
+  /// [VideoFormat.h264]); see [compressVideo] for the H.265 fallback behaviour.
+  ///
   /// When [background] is provided the whole batch keeps running while the app
   /// is backgrounded or the screen is off; see [BackgroundConfig] for the
   /// per-platform behaviour and caveats.
@@ -226,6 +237,7 @@ class LightCompressor {
     int? videoBitrateInMbps,
     bool disableAudio = false,
     bool isMinBitrateCheckEnabled = true,
+    VideoFormat videoFormat = VideoFormat.h264,
     BackgroundConfig? background,
   }) async {
     assert(
@@ -250,6 +262,7 @@ class LightCompressor {
           'videoBitrateInMbps': videoBitrateInMbps,
           'disableAudio': disableAudio,
           'isMinBitrateCheckEnabled': isMinBitrateCheckEnabled,
+          'videoFormat': videoFormat.name,
           'background': background?.toMap(),
         });
 
@@ -282,6 +295,7 @@ class LightCompressor {
         compressedSize: compressedSize,
         duration: duration,
         ratio: ratio,
+        usedFormat: _videoFormatFromWire(map['usedFormat'] as String?),
       );
     } else if (map['onFailure'] != null) {
       return OnFailure(map['onFailure'] as String);
@@ -290,6 +304,12 @@ class LightCompressor {
     }
     return const OnFailure('Something went wrong');
   }
+
+  /// Maps the native `usedFormat` wire value (`"h264"` / `"h265"`) onto a
+  /// [VideoFormat]. Defaults to [VideoFormat.h264] when absent (older native
+  /// builds or platforms that do not report it).
+  VideoFormat _videoFormatFromWire(String? wire) =>
+      wire == 'h265' ? VideoFormat.h265 : VideoFormat.h264;
 
   /// Maps a native failure to a typed exception.
   ///

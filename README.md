@@ -22,6 +22,7 @@ Extreme high bitrates are reduced while maintaining good video quality, resultin
 
 - **Single & batch compression** — compress one video, or many in a single call with per-item results and progress.
 - **Five quality presets** — the plugin calculates the optimal bitrate automatically.
+- **H.264 & H.265 (HEVC)** — pick the output codec via `videoFormat`; H.265 produces smaller files and automatically falls back to H.264 when the device can't encode it. `OnSuccess.usedFormat` reports the codec actually used.
 - **Custom resolution & bitrate** — override width, height, and bitrate when presets aren't enough.
 - **Structured success result** — `OnSuccess` carries `originalSize`, `compressedSize`, `duration`, and `ratio` (percentage reduction).
 - **Media info** — read width, height, duration, bitrate, rotation, frame rate, and MIME type via `getMediaInfo`.
@@ -173,6 +174,34 @@ Platform behaviour differs significantly:
   `BackgroundConfig` has no effect; the compression pauses and resumes when the
   app returns to the foreground.
 
+### Choose the output codec (H.265 / HEVC)
+
+By default the output is H.264 (AVC). Pass `videoFormat: VideoFormat.h265` to
+request HEVC, which yields smaller files at comparable quality. It applies to
+both `compressVideo` and `compressVideos`:
+
+```dart
+final result = await compressor.compressVideo(
+  path: '/path/to/source.mp4',
+  videoQuality: VideoQuality.medium,
+  videoFormat: VideoFormat.h265,
+  video: Video(videoName: 'compressed.mp4'),
+  android: AndroidConfig(saveAt: SaveAt.Movies),
+  ios: IOSConfig(saveInGallery: true),
+);
+
+if (result is OnSuccess) {
+  // Tells you whether H.265 was honoured or fell back to H.264.
+  print('Encoded with ${result.usedFormat.name}');
+}
+```
+
+`VideoFormat.h265` is used only when the device has a hardware HEVC encoder
+(Android excludes software-only encoders; iOS/macOS check the platform's
+advertised HEVC support). When it isn't available the compressor **silently
+falls back to H.264** rather than failing — always read `OnSuccess.usedFormat`
+to know what you got.
+
 ### Listen to progress
 
 Single video — a `Stream<double>` from `0` to `100`:
@@ -266,6 +295,7 @@ try {
 | `video` | `Video` | ✅ | — | Output video configuration (name, resolution, bitrate). |
 | `isMinBitrateCheckEnabled` | `bool` | | `true` | Skip compression when source bitrate is below 2 Mbps. |
 | `disableAudio` | `bool?` | | `false` | Strip the audio track from the output. |
+| `videoFormat` | `VideoFormat` | | `h264` | Output codec: `h264` or `h265` (HEVC). Falls back to H.264 when HEVC isn't supported. See [`VideoFormat`](#videoformat). |
 | `background` | `BackgroundConfig?` | | `null` | Keep running while the app is backgrounded. See [`BackgroundConfig`](#backgroundconfig). |
 
 ### `compressVideos()` → `Future<List<Result>>`
@@ -282,6 +312,7 @@ try {
 | `videoBitrateInMbps` | `int?` | | `null` | Custom bitrate in Mbps (overrides the preset). |
 | `disableAudio` | `bool` | | `false` | Strip the audio track from every output. |
 | `isMinBitrateCheckEnabled` | `bool` | | `true` | Skip compression when source bitrate is below 2 Mbps. |
+| `videoFormat` | `VideoFormat` | | `h264` | Output codec for every video: `h264` or `h265` (HEVC). See [`VideoFormat`](#videoformat). |
 | `background` | `BackgroundConfig?` | | `null` | Keep the whole batch running while backgrounded. See [`BackgroundConfig`](#backgroundconfig). |
 
 ### `Video`
@@ -315,11 +346,20 @@ Opt into background execution. `notificationTitle` is the Android foreground-ser
 |-----------|------|---------|-------------|
 | `notificationTitle` | `String` | `'Compressing video'` | Title of the Android foreground-service notification. |
 
+### `VideoFormat`
+
+Output codec, written into an MP4/QuickTime container.
+
+| Value | Description |
+|-------|-------------|
+| `h264` | H.264 / AVC. The widely compatible default. |
+| `h265` | H.265 / HEVC. Smaller files at comparable quality; **requires a hardware HEVC encoder** and automatically falls back to `h264` otherwise. Check [`OnSuccess.usedFormat`](#result-types) for the codec actually used. |
+
 ### `Result` types
 
 | Type | Properties | Description |
 |------|-----------|-------------|
-| `OnSuccess` | `destinationPath: String`, `originalSize: int`, `compressedSize: int`, `duration: double`, `ratio: double` | Output path, byte sizes, duration (seconds) and percentage size reduction. |
+| `OnSuccess` | `destinationPath: String`, `originalSize: int`, `compressedSize: int`, `duration: double`, `ratio: double`, `usedFormat: VideoFormat` | Output path, byte sizes, duration (seconds), percentage size reduction and the codec actually used. |
 | `OnFailure` | `message: String` | Unclassified failure with an error message. |
 | `OnCancelled` | `isCancelled: bool` | Compression was cancelled via `cancelCompression()`. |
 

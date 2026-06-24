@@ -26,6 +26,12 @@ enum class VideoQuality {
     VERY_HIGH, HIGH, MEDIUM, LOW, VERY_LOW
 }
 
+/** Output video codec. [H265] falls back to [H264] when no hardware HEVC
+ *  encoder is available on the device. */
+enum class VideoFormat {
+    H264, H265
+}
+
 object VideoCompressor : CoroutineScope by MainScope() {
 
     private val jobs = mutableListOf<Job>()
@@ -174,7 +180,7 @@ object VideoCompressor : CoroutineScope by MainScope() {
                                 shouldSave = true
                             )
 
-                            listener.onSuccess(i, result.size, savedFile?.path, result.duration)
+                            listener.onSuccess(i, result.size, savedFile?.path, result.duration, result.videoFormat)
                         } else {
                             try {
                                 if (finalDesFile?.exists() == true) finalDesFile.delete()

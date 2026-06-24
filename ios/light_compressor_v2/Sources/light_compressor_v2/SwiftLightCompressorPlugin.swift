@@ -112,6 +112,8 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
             }
         }
 
+        let videoFormat = VideoFormat.from(wire: args["videoFormat"] as? String)
+
         compression = LightCompressor().compressVideo(
             videos: [
                 .init(
@@ -123,7 +125,8 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
                         videoBitrateInMbps: videoBitrateInMbps,
                         disableAudio: disableAudio,
                         keepOriginalResolution: keepOriginalResolution,
-                        videoSize: videoSize))
+                        videoSize: videoSize,
+                        videoFormat: videoFormat))
             ],
             progressQueue: .main,
             progressHandler: { [weak self] _, progress in
@@ -139,7 +142,7 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
                 case .onStart:
                     break
 
-                case .onSuccess(let index, let url, let duration):
+                case .onSuccess(let index, let url, let duration, let usedFormat):
                     if saveInGallery {
                         PHPhotoLibrary.shared().performChanges {
                             PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
@@ -155,13 +158,15 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
                         let duration: Double
                         let originalSize: Int
                         let compressedSize: Int
+                        let usedFormat: String
                     }
                     let response = SuccessResponse(
                         onSuccess: url.path,
                         index: String(index),
                         duration: duration,
                         originalSize: originalSize,
-                        compressedSize: compressedSize
+                        compressedSize: compressedSize,
+                        usedFormat: usedFormat.wireValue
                     )
                     replyOnce(response.toJson)
 
@@ -217,7 +222,8 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
             videoBitrateInMbps: videoBitrateInMbps,
             disableAudio: disableAudio,
             keepOriginalResolution: keepOriginalResolution,
-            videoSize: videoSize)
+            videoSize: videoSize,
+            videoFormat: VideoFormat.from(wire: args["videoFormat"] as? String))
 
         let count = paths.count
         var videos: [LightCompressor.Video] = []
@@ -273,7 +279,7 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
                 case .onStart:
                     break
 
-                case .onSuccess(let index, let url, let duration):
+                case .onSuccess(let index, let url, let duration, let usedFormat):
                     if saveInGallery {
                         PHPhotoLibrary.shared().performChanges {
                             PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
@@ -288,6 +294,7 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
                         "originalSize": originalSize,
                         "compressedSize": compressedSize,
                         "duration": duration,
+                        "usedFormat": usedFormat.wireValue,
                     ])
 
                 case .onFailure(let index, let error):

@@ -1,5 +1,14 @@
 # Changelog
 
+# 1.4.0
+
+### New
+
+- **H.265 / HEVC output** — pass an optional `videoFormat` to `compressVideo` / `compressVideos` to choose the output codec (`VideoFormat.h264` — the default — or `VideoFormat.h265`). HEVC produces noticeably smaller files at comparable quality. Omitting the parameter keeps the previous H.264 behaviour and is fully backwards compatible.
+  - **Automatic fallback** — `VideoFormat.h265` is used only when the device can encode HEVC in hardware (Android: a non-software `video/hevc` encoder; iOS/macOS: an advertised HEVC encoder). On devices without it, the compressor transparently falls back to H.264 instead of failing.
+  - **`OnSuccess.usedFormat`** — every successful result now reports the codec actually used, so you can tell whether an H.265 request was honoured or fell back to H.264.
+- Example app gains a **“Use H.265 (HEVC)”** toggle in both the single and batch flows, and the single-video result now shows the codec used.
+
 # 1.3.0
 
 ### New
