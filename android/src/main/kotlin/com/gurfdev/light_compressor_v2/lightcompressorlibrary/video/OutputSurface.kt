@@ -63,12 +63,16 @@ class OutputSurface : OnFrameAvailableListener {
      * data is available.
      */
     fun awaitNewImage() {
-        val timeOutMS = 100
+        // Matches the upstream MediaCodec sample (bigflake). The previous 100ms was
+        // too aggressive: under a saturated GPU — e.g. several parallel 4K / HEVC
+        // sessions in a batch — the decoder can take longer than that to render a
+        // frame, and timing out drops it and corrupts the output. 2.5s tolerates
+        // heavy contention while still bailing out on a genuine stall.
+        val timeOutMS = 2500
         synchronized(mFrameSyncObject) {
             while (!mFrameAvailable) {
                 try {
-                    // Wait for onFrameAvailable() to signal us.  Use a timeout to avoid
-                    // stalling the test if it doesn't arrive.
+                    // Wait for onFrameAvailable() to signal us.
                     mFrameSyncObject.wait(timeOutMS.toLong())
                     if (!mFrameAvailable) {
                         throw RuntimeException("Surface frame wait timed out")
