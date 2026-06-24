@@ -1,6 +1,7 @@
 # light_compressor_v2
 
 [![Pub Version](https://img.shields.io/pub/v/light_compressor_v2.svg)](https://pub.dev/packages/light_compressor_v2)
+[![CI](https://github.com/Farid023/light_compressor_v2/actions/workflows/ci.yml/badge.svg)](https://github.com/Farid023/light_compressor_v2/actions/workflows/ci.yml)
 [![Pub Platforms](https://img.shields.io/badge/platform-iOS%20%7C%20Android%20%7C%20macOS-blue)](https://pub.dev/packages/light_compressor_v2)
 [![Pub Likes](https://img.shields.io/pub/likes/light_compressor_v2)](https://pub.dev/packages/light_compressor_v2)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -458,6 +459,30 @@ All extend `LightCompressorException` (catch the base type to handle any):
 **Background execution** — when you pass a `BackgroundConfig`, no manifest changes are required on your side. The plugin already declares the foreground service and the `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC` and `POST_NOTIFICATIONS` permissions, which merge into your app automatically; the `POST_NOTIFICATIONS` runtime prompt (Android 13+) is requested for you.
 
 **ProGuard** — no special ProGuard or R8 rules are required.
+
+---
+
+## 🧪 Testing
+
+The plugin ships with two layers of tests:
+
+- **Unit tests** (`test/`) cover the Dart surface: argument forwarding over the method channel, result/event parsing, batch ordering and failure typing, progress-stream coercion, and the typed-exception mapping. They need no device:
+
+  ```bash
+  flutter test
+  ```
+
+- **Integration tests** (`example/integration_test/`) exercise the **real native pipeline** (Android `MediaCodec` / `MediaMuxer`, Apple `AVFoundation`) on a device, emulator, or simulator — metadata, thumbnails, compression options, progress streams, cancellation, batch resilience, and H.264 / H.265 codec selection with automatic fallback:
+
+  ```bash
+  cd example
+  flutter test integration_test/plugin_integration_test.dart -d <deviceId>
+  flutter test integration_test/hevc_compression_test.dart   -d <deviceId>
+  ```
+
+  A short sample clip is bundled at `example/integration_test/assets/sample.mp4`; the tests skip cleanly when it is absent.
+
+`flutter analyze`, formatting, and the unit tests run in [CI](https://github.com/Farid023/light_compressor_v2/actions/workflows/ci.yml) on every push and pull request. Integration tests are run manually, since they need a device.
 
 ---
 

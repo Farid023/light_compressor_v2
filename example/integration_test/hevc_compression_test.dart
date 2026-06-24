@@ -53,7 +53,8 @@ void main() {
       await expectReadableVideo(compressor, ok.destinationPath);
     });
 
-    testWidgets('H.265 is honoured or falls back, and the report matches a '
+    testWidgets(
+        'H.265 is honoured or falls back, and the report matches a '
         'valid file', (WidgetTester tester) async {
       if (source == null) return markTestSkipped(kNoClipSkipReason);
       final OnSuccess ok = await compress(VideoFormat.h265, 'lc_it_h265');

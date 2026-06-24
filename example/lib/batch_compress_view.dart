@@ -99,9 +99,7 @@ class _BatchCompressViewState extends State<BatchCompressView>
         android: AndroidConfig(isSharedStorage: true, saveAt: SaveAt.Movies),
         ios: IOSConfig(saveInGallery: false),
         videoFormat: _videoFormat,
-        background: _runInBackground
-            ? const BackgroundConfig()
-            : null,
+        background: _runInBackground ? const BackgroundConfig() : null,
       );
     } catch (e) {
       debugPrint('Batch error: $e');
@@ -169,9 +167,9 @@ class _BatchCompressViewState extends State<BatchCompressView>
             onChanged: _running
                 ? null
                 : (value) => setState(
-                    () => _videoFormat =
-                        value ? VideoFormat.h265 : VideoFormat.h264,
-                  ),
+                      () => _videoFormat =
+                          value ? VideoFormat.h265 : VideoFormat.h264,
+                    ),
           ),
           if (_running) ...[
             const SizedBox(height: 16),

@@ -152,9 +152,9 @@ class _SingleCompressViewState extends State<SingleCompressView>
           onChanged: _stage == _Stage.compressing
               ? null
               : (value) => setState(
-                  () =>
-                      _videoFormat = value ? VideoFormat.h265 : VideoFormat.h264,
-                ),
+                    () => _videoFormat =
+                        value ? VideoFormat.h265 : VideoFormat.h264,
+                  ),
         ),
         if (_info != null || _thumbnailPath != null) ...[
           const SizedBox(height: 16),
