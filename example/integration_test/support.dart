@@ -30,7 +30,12 @@ Future<String?> prepareSampleSource() async {
   }
   final Uint8List bytes = data.buffer.asUint8List();
   if (bytes.length < _minRealClipBytes) return null;
-  final File file = File('${Directory.systemTemp.path}/lc_it_source.mp4');
+  // Write into a dedicated sub-directory: LightCompressor.clearCache() wipes
+  // *.mp4 in the (top-level) temp dir, which would otherwise delete this shared
+  // source mid-suite (e.g. before the cancellation test).
+  final Directory dir = Directory('${Directory.systemTemp.path}/lc_it_fixtures')
+    ..createSync(recursive: true);
+  final File file = File('${dir.path}/source.mp4');
   await file.writeAsBytes(bytes, flush: true);
   return file.path;
 }
@@ -38,7 +43,8 @@ Future<String?> prepareSampleSource() async {
 /// Asserts the file at [path] is a real, *playable* video: its metadata reads
 /// back with valid dimensions AND a frame can actually be decoded from it
 /// (the latter catches malformed bitstreams that still carry correct metadata).
-Future<void> expectReadableVideo(LightCompressor compressor, String path) async {
+Future<void> expectReadableVideo(
+    LightCompressor compressor, String path) async {
   final MediaInfo info = await compressor.getMediaInfo(path);
   expect(info.width, isNotNull);
   expect(info.height, isNotNull);

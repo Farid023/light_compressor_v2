@@ -39,13 +39,40 @@ class OnSuccess implements Result {
   final VideoFormat usedFormat;
 }
 
+/// Category of a compression failure. Mirrors the typed exceptions thrown by the
+/// single-video API ([LightCompressor.compressVideo]); exposed on [OnFailure] so
+/// batch results (which return [OnFailure] instead of throwing) can be branched
+/// on programmatically too.
+enum CompressionFailureType {
+  /// Missing read/write permission.
+  permission,
+
+  /// Unsupported format/codec or a missing track.
+  unsupported,
+
+  /// The source video could not be found.
+  notFound,
+
+  /// Any other / unclassified failure.
+  unknown,
+}
+
 /// Represents a failed video compression attempt.
 class OnFailure implements Result {
-  /// Creates an [OnFailure] result with a description of the error.
-  const OnFailure(this.message);
+  /// Creates an [OnFailure] result with a description of the error and an
+  /// optional [failureType] category.
+  const OnFailure(
+    this.message, {
+    this.failureType = CompressionFailureType.unknown,
+  });
 
   /// Description of the error that caused the compression to fail.
   final String message;
+
+  /// The failure category when the native side classified it; otherwise
+  /// [CompressionFailureType.unknown]. Especially useful for batch results,
+  /// where failures are returned rather than thrown.
+  final CompressionFailureType failureType;
 }
 
 /// Represents a cancelled video compression operation.

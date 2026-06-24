@@ -15,6 +15,7 @@ import com.gurfdev.light_compressor_v2.lightcompressorlibrary.config.*
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.saveVideoInExternal
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.video.Result
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Semaphore
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileNotFoundException
@@ -35,6 +36,17 @@ enum class VideoFormat {
 object VideoCompressor : CoroutineScope by MainScope() {
 
     private val jobs = mutableListOf<Job>()
+
+    /**
+     * Maximum number of videos transcoded at the same time within one batch.
+     *
+     * Each transcode holds a hardware decoder + encoder + GL surface, and most
+     * SoCs expose only a few concurrent codec instances. Running an entire
+     * batch in parallel oversubscribes them and surfaces as
+     * "Surface frame wait timed out". Two gives some overlap without exhausting
+     * the codecs; any extra videos queue until a slot frees up.
+     */
+    private const val MAX_CONCURRENT_COMPRESSIONS = 2
 
     /**
      * This function compresses a given list of [uris] of video files and writes the compressed
@@ -77,8 +89,9 @@ object VideoCompressor : CoroutineScope by MainScope() {
         configureWith: Configuration,
         listener: CompressionListener,
     ) {
-        // Only one is allowed
-        assert(configureWith.videoNames.size == uris.size)
+        require(configureWith.videoNames.size == uris.size) {
+            "videoNames.size (${configureWith.videoNames.size}) must equal uris.size (${uris.size})"
+        }
 
         doVideoCompression(
             context,
@@ -112,6 +125,8 @@ object VideoCompressor : CoroutineScope by MainScope() {
         // the flag and clobber a cancel() request mid-batch.
         isRunning = true
         jobs.clear()
+        // Bound concurrent transcodes per batch (see MAX_CONCURRENT_COMPRESSIONS).
+        val semaphore = Semaphore(MAX_CONCURRENT_COMPRESSIONS)
         for (i in uris.indices) {
 
             val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
@@ -122,7 +137,15 @@ object VideoCompressor : CoroutineScope by MainScope() {
             jobs.add(coroutineScope.launch(Dispatchers.IO) {
                 var tempSrcFile: File? = null
                 var finalDesFile: File? = null
+                var permitAcquired = false
                 try {
+                    // Wait for a free transcode slot. Suspends (cheaply) when the
+                    // batch is already at MAX_CONCURRENT_COMPRESSIONS. Acquiring
+                    // inside the try means a cancel while still queued is caught
+                    // below and reported as onCancelled(i), like a running video.
+                    semaphore.acquire()
+                    permitAcquired = true
+
                     val job = async { getMediaPath(context, uris[i]) }
                     val path = job.await()
 
@@ -183,6 +206,7 @@ object VideoCompressor : CoroutineScope by MainScope() {
                         listener.onFailure(i, t.message ?: "An error has occurred!", classifyThrowable(t))
                     }
                 } finally {
+                    if (permitAcquired) semaphore.release()
                     try {
                         if (tempSrcFile?.exists() == true) tempSrcFile.delete()
                     } catch (e: Exception) {}

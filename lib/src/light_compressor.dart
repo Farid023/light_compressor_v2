@@ -54,7 +54,7 @@ class LightCompressor {
   /// The emitted values range from `0.0` to `100.0`.
   Stream<double> get onProgressUpdated {
     _onProgressUpdated ??= _progressStream.receiveBroadcastStream().map<double>(
-      (dynamic result) => result != null ? result : 0,
+      (dynamic result) => (result as num?)?.toDouble() ?? 0.0,
     );
     return _onProgressUpdated!;
   }
@@ -197,9 +197,12 @@ class LightCompressor {
       if (exception != null) {
         throw exception;
       }
-      return OnFailure(failureMessage);
+      return OnFailure(
+        failureMessage,
+        failureType: _failureTypeFromWire(failureType),
+      );
     } else if (response['onCancelled'] != null) {
-      return OnCancelled(isCancelled: response['onCancelled']);
+      return OnCancelled(isCancelled: response['onCancelled'] == true);
     } else {
       return const OnFailure('Something went wrong');
     }
@@ -298,7 +301,10 @@ class LightCompressor {
         usedFormat: _videoFormatFromWire(map['usedFormat'] as String?),
       );
     } else if (map['onFailure'] != null) {
-      return OnFailure(map['onFailure'] as String);
+      return OnFailure(
+        map['onFailure'] as String,
+        failureType: _failureTypeFromWire(map['failureType'] as String?),
+      );
     } else if (map['onCancelled'] != null) {
       return OnCancelled(isCancelled: map['onCancelled'] == true);
     }
@@ -310,6 +316,21 @@ class LightCompressor {
   /// builds or platforms that do not report it).
   VideoFormat _videoFormatFromWire(String? wire) =>
       wire == 'h265' ? VideoFormat.h265 : VideoFormat.h264;
+
+  /// Maps the native `failureType` wire value onto a [CompressionFailureType];
+  /// defaults to [CompressionFailureType.unknown] for absent/unrecognized codes.
+  CompressionFailureType _failureTypeFromWire(String? wire) {
+    switch (wire) {
+      case 'permission':
+        return CompressionFailureType.permission;
+      case 'unsupported':
+        return CompressionFailureType.unsupported;
+      case 'notFound':
+        return CompressionFailureType.notFound;
+      default:
+        return CompressionFailureType.unknown;
+    }
+  }
 
   /// Maps a native failure to a typed exception.
   ///
@@ -467,9 +488,11 @@ class LightCompressor {
 
   /// Requests cancellation of the active video compression.
   ///
-  /// The cancellation is reported as an [OnCancelled] result from the pending
-  /// [compressVideo] / [compressVideos] call; this method only forwards the
-  /// request to the platform and completes once it has been delivered.
+  /// Cancellation is best-effort: the request is forwarded to the platform and
+  /// the returned [Future] completes once it has been delivered. The pending
+  /// [compressVideo] / [compressVideos] call usually then resolves to an
+  /// [OnCancelled] result — but if the compression happens to finish first it
+  /// may still resolve to [OnSuccess] or [OnFailure].
   Future<void> cancelCompression() =>
       _channel.invokeMethod<void>('cancelCompression');
 }

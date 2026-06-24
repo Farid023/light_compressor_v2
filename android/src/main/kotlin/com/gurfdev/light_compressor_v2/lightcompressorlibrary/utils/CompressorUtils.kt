@@ -229,9 +229,6 @@ object CompressorUtils {
         }.getOrDefault(false)
 
     /**
-     * Get the highest profile level supported by the AVC encoder: High > Main > Baseline
-     */
-    /**
      * Finds a profile+level pair that an available encoder for [type] actually
      * supports. Preference order is High > Main > Baseline, and within a profile
      * the highest advertised level is chosen.
@@ -279,69 +276,3 @@ object CompressorUtils {
         return null
     }
 }
-
-/*
-            if (codec.name == "c2.qti.avc.encoder") {
-                val capabilities = codec.getCapabilitiesForType("video/avc")
-
-
-                for (c in capabilities.colorFormats) {
-                    Log.wtf("color format", c.toString())
-                }
-
-                for (c in capabilities.profileLevels) {
-                    Log.wtf(" level", c.level.toString())
-                    Log.wtf("profile ", c.profile.toString())
-                }
-
-                Log.wtf(
-                    "complexity range",
-                    capabilities.encoderCapabilities.complexityRange.upper.toString()
-                )
-
-                Log.wtf(
-                    "quality range", " ${ capabilities.encoderCapabilities.qualityRange}"
-                )
-
-                Log.wtf(
-                    "frame rates range", " ${ capabilities.videoCapabilities.supportedFrameRates}"
-                )
-
-                Log.wtf(
-                    "bitrate rates range", " ${ capabilities.videoCapabilities.bitrateRange}"
-                )
-
-                Log.wtf(
-                    "mode supported", " ${ capabilities.encoderCapabilities.isBitrateModeSupported(1)}"
-                )
-
-                Log.wtf(
-                    "height alignment", " ${ capabilities.videoCapabilities.heightAlignment}"
-                )
-
-                Log.wtf(
-                    "supported heights", " ${ capabilities.videoCapabilities.supportedHeights}"
-                )
-
-                Log.wtf(
-                    "supported points", " ${ capabilities.videoCapabilities.supportedPerformancePoints}"
-                )
-
-                Log.wtf(
-                    "supported width", " ${ capabilities.videoCapabilities.supportedWidths}"
-                )
-
-                Log.wtf(
-                    "width alignment", " ${ capabilities.videoCapabilities.widthAlignment}"
-                )
-
-                Log.wtf(
-                    "default format", " ${ capabilities.defaultFormat}"
-                )
-
-                Log.wtf(
-                    "mime", " ${ capabilities.mimeType}"
-                )
-
-            }
- */

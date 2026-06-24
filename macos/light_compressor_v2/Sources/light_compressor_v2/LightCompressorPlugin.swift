@@ -133,6 +133,11 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                         }
                     }
                 )
+            } else {
+                result(FlutterError(
+                    code: "INVALID_ARGS",
+                    message: "One or more required arguments are missing or have an invalid type.",
+                    details: nil))
             }
         case "startBatchCompression":
             startBatchCompression(call: call, result: result)

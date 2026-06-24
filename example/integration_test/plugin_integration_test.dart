@@ -168,6 +168,60 @@ void main() {
     });
   });
 
+  group('batch resilience', () {
+    // A batch runs items under a concurrency cap (Android Semaphore(2)); these
+    // assert that one failing item neither stops the others nor reorders the
+    // results, which stay indexed by input position.
+    const String bogus = '/does/not/exist_lc_it_batch.mp4';
+
+    testWidgets(
+      'a bad path fails its slot without blocking the valid one (order kept)',
+      (WidgetTester tester) async {
+        if (source == null) return markTestSkipped(kNoClipSkipReason);
+        final List<Result> results = await compressor.compressVideos(
+          paths: <String>[source!, bogus],
+          videoNames: <String>['lc_it_ok0', 'lc_it_bad1'],
+          videoQuality: VideoQuality.medium,
+          isMinBitrateCheckEnabled: false,
+          android: AndroidConfig(isSharedStorage: false),
+          ios: IOSConfig(saveInGallery: false),
+        );
+        expect(results, hasLength(2));
+        expect(results[0], isA<OnSuccess>(),
+            reason: 'valid clip at index 0 should still succeed');
+        expect(results[1], isA<OnFailure>(),
+            reason: 'bogus path at index 1 should fail, not block index 0');
+        expect((results[1] as OnFailure).message, isNotEmpty);
+        await expectReadableVideo(
+            compressor, (results[0] as OnSuccess).destinationPath);
+      },
+      timeout: const Timeout(Duration(seconds: 120)),
+    );
+
+    testWidgets(
+      'a failure at index 0 still lets index 1 succeed (order kept)',
+      (WidgetTester tester) async {
+        if (source == null) return markTestSkipped(kNoClipSkipReason);
+        final List<Result> results = await compressor.compressVideos(
+          paths: <String>[bogus, source!],
+          videoNames: <String>['lc_it_bad0', 'lc_it_ok1'],
+          videoQuality: VideoQuality.medium,
+          isMinBitrateCheckEnabled: false,
+          android: AndroidConfig(isSharedStorage: false),
+          ios: IOSConfig(saveInGallery: false),
+        );
+        expect(results, hasLength(2));
+        expect(results[0], isA<OnFailure>(),
+            reason: 'bogus path at index 0 should fail');
+        expect(results[1], isA<OnSuccess>(),
+            reason: 'valid clip at index 1 should succeed despite the failure');
+        await expectReadableVideo(
+            compressor, (results[1] as OnSuccess).destinationPath);
+      },
+      timeout: const Timeout(Duration(seconds: 120)),
+    );
+  });
+
   group('lifecycle', () {
     testWidgets('clearCache completes without error', (
       WidgetTester tester,

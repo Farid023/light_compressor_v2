@@ -369,7 +369,9 @@ public struct LightCompressor {
             videoWriterInput.expectsMediaDataInRealTime = true
             videoWriterInput.transform = videoTrack.preferredTransform
 
-            guard let videoWriter = try? AVAssetWriter(outputURL: destination, fileType: .mov) else {
+            // .mp4 container to match the .mp4 output filename — important for
+            // HEVC interop with players/Android that key off the extension.
+            guard let videoWriter = try? AVAssetWriter(outputURL: destination, fileType: .mp4) else {
                 completion(.onFailure(index, CompressionError(title: "Failed to create video writer")))
                 continue
             }
@@ -388,15 +390,20 @@ public struct LightCompressor {
             }
             videoReader.add(videoReaderOutput)
 
-            // Audio setup
-            let audioWriterInput = AVAssetWriterInput(mediaType: .audio, outputSettings: nil)
-            audioWriterInput.expectsMediaDataInRealTime = false
-            videoWriter.add(audioWriterInput)
-
-            let audioTrack = videoAsset.tracks(withMediaType: .audio).first
+            // Audio setup — only wire up an audio input when there is audio to
+            // copy and it isn't disabled. Adding an input that is never fed and
+            // never marked finished can stall AVAssetWriter.finishWriting.
+            let audioTrack = configuration.disableAudio
+                ? nil
+                : videoAsset.tracks(withMediaType: .audio).first
+            var audioWriterInput: AVAssetWriterInput?
             var audioReader: AVAssetReader?
             var audioReaderOutput: AVAssetReaderTrackOutput?
             if let audioTrack {
+                let input = AVAssetWriterInput(mediaType: .audio, outputSettings: nil)
+                input.expectsMediaDataInRealTime = false
+                videoWriter.add(input)
+                audioWriterInput = input
                 audioReaderOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
                 audioReader = try? AVAssetReader(asset: videoAsset)
                 audioReader?.add(audioReaderOutput!)
@@ -436,7 +443,7 @@ public struct LightCompressor {
 
                         guard videoReader.status == .completed else { return }
 
-                        if let audioReader, let audioReaderOutput, !configuration.disableAudio,
+                        if let audioReader, let audioReaderOutput, let audioWriterInput,
                            audioReader.status != .reading, audioReader.status != .completed {
 
                             audioReader.startReading()
@@ -464,7 +471,12 @@ public struct LightCompressor {
                                         audioWriterInput.markAsFinished()
                                         videoWriter.finishWriting {
                                             DispatchQueue.main.async {
-                                                completion(.onSuccess(index, destination, durationInSeconds, resolvedFormat))
+                                                if videoWriter.status == .completed {
+                                                    completion(.onSuccess(index, destination, durationInSeconds, resolvedFormat))
+                                                } else {
+                                                    completion(.onFailure(index, CompressionError(
+                                                        title: videoWriter.error?.localizedDescription ?? "Video writing failed")))
+                                                }
                                             }
                                         }
                                     }
@@ -473,7 +485,12 @@ public struct LightCompressor {
                         } else {
                             videoWriter.finishWriting {
                                 DispatchQueue.main.async {
-                                    completion(.onSuccess(index, destination, durationInSeconds, resolvedFormat))
+                                    if videoWriter.status == .completed {
+                                        completion(.onSuccess(index, destination, durationInSeconds, resolvedFormat))
+                                    } else {
+                                        completion(.onFailure(index, CompressionError(
+                                            title: videoWriter.error?.localizedDescription ?? "Video writing failed")))
+                                    }
                                 }
                             }
                         }

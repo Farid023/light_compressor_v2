@@ -92,6 +92,19 @@ void main() {
       expect(result.message, 'Failed to compress');
     });
 
+    test(
+      'OnFailure defaults failureType to unknown and carries an explicit one',
+      () {
+        const a = OnFailure('boom');
+        expect(a.failureType, CompressionFailureType.unknown);
+        const b = OnFailure(
+          'denied',
+          failureType: CompressionFailureType.permission,
+        );
+        expect(b.failureType, CompressionFailureType.permission);
+      },
+    );
+
     test('OnCancelled contains isCancelled', () {
       const result = OnCancelled(isCancelled: true);
       expect(result.isCancelled, true);
@@ -167,6 +180,35 @@ void main() {
       });
       expect(upright.displayWidth, 1920);
       expect(upright.displayHeight, 1080);
+    });
+
+    test('rotation 180 keeps dimensions; 270 swaps them', () {
+      final r180 = MediaInfo.fromMap(<String, dynamic>{
+        'width': 1920,
+        'height': 1080,
+        'rotation': 180,
+      });
+      expect(r180.displayWidth, 1920);
+      expect(r180.displayHeight, 1080);
+
+      final r270 = MediaInfo.fromMap(<String, dynamic>{
+        'width': 1920,
+        'height': 1080,
+        'rotation': 270,
+      });
+      expect(r270.displayWidth, 1080);
+      expect(r270.displayHeight, 1920);
+    });
+
+    test('fromMap coerces integer bitrate/frameRate', () {
+      final info = MediaInfo.fromMap(<String, dynamic>{
+        'width': 100,
+        'height': 100,
+        'bitrate': 5000000,
+        'frameRate': 30,
+      });
+      expect(info.bitrate, 5000000);
+      expect(info.frameRate, 30.0);
     });
 
     test('copyWith and equality', () {

@@ -91,23 +91,26 @@ void main() {
       },
     );
 
-    test('compressVideo forwards BackgroundConfig as a background map', () async {
-      mockedResponse = jsonEncode({'onSuccess': '/path/to/output.mp4'});
+    test(
+      'compressVideo forwards BackgroundConfig as a background map',
+      () async {
+        mockedResponse = jsonEncode({'onSuccess': '/path/to/output.mp4'});
 
-      await compressor.compressVideo(
-        path: '/path/to/input.mp4',
-        videoQuality: VideoQuality.medium,
-        video: Video(videoName: 'output.mp4'),
-        android: AndroidConfig(),
-        ios: IOSConfig(),
-        background: const BackgroundConfig(notificationTitle: 'Title'),
-      );
+        await compressor.compressVideo(
+          path: '/path/to/input.mp4',
+          videoQuality: VideoQuality.medium,
+          video: Video(videoName: 'output.mp4'),
+          android: AndroidConfig(),
+          ios: IOSConfig(),
+          background: const BackgroundConfig(notificationTitle: 'Title'),
+        );
 
-      final arguments = log.first.arguments as Map<dynamic, dynamic>;
-      expect(arguments['background'], <String, dynamic>{
-        'notificationTitle': 'Title',
-      });
-    });
+        final arguments = log.first.arguments as Map<dynamic, dynamic>;
+        expect(arguments['background'], <String, dynamic>{
+          'notificationTitle': 'Title',
+        });
+      },
+    );
 
     test('compressVideo sends a null background when not requested', () async {
       mockedResponse = jsonEncode({'onSuccess': '/path/to/output.mp4'});
@@ -625,6 +628,111 @@ void main() {
           log.where((MethodCall c) => c.method == 'startBatchCompression'),
           isEmpty,
         );
+      },
+    );
+
+    test(
+      'compressVideo defaults usedFormat to h264 for an unknown wire value',
+      () async {
+        mockedResponse = jsonEncode({
+          'onSuccess': '/path/to/output.mp4',
+          'usedFormat': 'av1',
+        });
+
+        final result = await compressor.compressVideo(
+          path: '/path/to/input.mp4',
+          videoQuality: VideoQuality.medium,
+          video: Video(videoName: 'output.mp4'),
+          android: AndroidConfig(),
+          ios: IOSConfig(),
+        );
+
+        expect((result as OnSuccess).usedFormat, VideoFormat.h264);
+      },
+    );
+
+    test('compressVideos preserves order across mixed outcomes', () async {
+      batchResponse = <Map<String, dynamic>>[
+        {'onSuccess': '/a.mp4', 'originalSize': 100, 'compressedSize': 40},
+        {'onFailure': 'bad codec', 'failureType': 'unsupported'},
+        {'onCancelled': true},
+      ];
+
+      final results = await compressor.compressVideos(
+        paths: ['/a.mp4', '/b.mp4', '/c.mp4'],
+        videoNames: ['a.mp4', 'b.mp4', 'c.mp4'],
+        videoQuality: VideoQuality.medium,
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+      );
+
+      expect(results, hasLength(3));
+      expect(results[0], isA<OnSuccess>());
+      expect(results[1], isA<OnFailure>());
+      expect(results[2], isA<OnCancelled>());
+      expect((results[2] as OnCancelled).isCancelled, isTrue);
+    });
+
+    test('compressVideos exposes failureType on OnFailure', () async {
+      batchResponse = <Map<String, dynamic>>[
+        {'onFailure': 'denied', 'failureType': 'permission'},
+        {'onFailure': 'opaque error'},
+      ];
+
+      final results = await compressor.compressVideos(
+        paths: ['/a.mp4', '/b.mp4'],
+        videoNames: ['a.mp4', 'b.mp4'],
+        videoQuality: VideoQuality.medium,
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+      );
+
+      expect(
+        (results[0] as OnFailure).failureType,
+        CompressionFailureType.permission,
+      );
+      expect(
+        (results[1] as OnFailure).failureType,
+        CompressionFailureType.unknown,
+      );
+    });
+
+    test(
+      'getMediaInfo throws MediaInfoException when native returns null',
+      () async {
+        mediaInfoResponse = null;
+
+        expect(
+          () => compressor.getMediaInfo('/path/to/input.mp4'),
+          throwsA(isA<MediaInfoException>()),
+        );
+      },
+    );
+
+    test(
+      'onProgressUpdated emits doubles (int coerced, null becomes 0)',
+      () async {
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        const EventChannel progressChannel = EventChannel('compression/stream');
+        messenger.setMockStreamHandler(
+          progressChannel,
+          MockStreamHandler.inline(
+            onListen: (Object? args, MockStreamHandlerEventSink sink) {
+              sink.success(50); // int from native
+              sink.success(null); // null → 0.0
+              sink.endOfStream();
+            },
+          ),
+        );
+        addTearDown(
+          () => messenger.setMockStreamHandler(progressChannel, null),
+        );
+
+        final List<double> values = await compressor.onProgressUpdated
+            .take(2)
+            .toList();
+        expect(values, <double>[50.0, 0.0]);
       },
     );
   });

@@ -360,8 +360,19 @@ Output codec, written into an MP4/QuickTime container.
 | Type | Properties | Description |
 |------|-----------|-------------|
 | `OnSuccess` | `destinationPath: String`, `originalSize: int`, `compressedSize: int`, `duration: double`, `ratio: double`, `usedFormat: VideoFormat` | Output path, byte sizes, duration (seconds), percentage size reduction and the codec actually used. |
-| `OnFailure` | `message: String` | Unclassified failure with an error message. |
+| `OnFailure` | `message: String`, `failureType: CompressionFailureType` | A failure: a human-readable `message` plus a [`CompressionFailureType`](#compressionfailuretype) category for reacting in code without parsing text. |
 | `OnCancelled` | `isCancelled: bool` | Compression was cancelled via `cancelCompression()`. |
+
+### `CompressionFailureType`
+
+The category carried by `OnFailure.failureType`, for reacting to *why* a video failed (including per-item in a batch) without parsing `message`. Defaults to `unknown`.
+
+| Value | Description |
+|-------|-------------|
+| `permission` | A required permission (e.g. storage) was denied. |
+| `unsupported` | The source could not be processed — e.g. no decodable video track or an unsupported format. |
+| `notFound` | The source file could not be found or opened. |
+| `unknown` | Any other or unclassified failure. |
 
 ### `BatchEvent` (from `onBatchUpdate`)
 

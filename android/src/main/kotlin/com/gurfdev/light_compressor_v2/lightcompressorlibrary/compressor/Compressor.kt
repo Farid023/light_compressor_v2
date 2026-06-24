@@ -39,6 +39,7 @@ object Compressor {
         "The provided bitrate is smaller than what is needed for compression " +
                 "try to set isMinBitRateEnabled to false"
 
+    @Volatile
     var isRunning = true
 
     suspend fun compressVideo(
@@ -322,6 +323,14 @@ object Compressor {
 
                 // Start with video track
                 val videoIndex = findTrack(extractor, isVideo = true)
+                if (videoIndex < 0) {
+                    return Result(
+                        id,
+                        success = false,
+                        failureMessage = "No video track found in the source file.",
+                        errorType = CompressionErrorType.UNSUPPORTED,
+                    )
+                }
 
                 extractor.selectTrack(videoIndex)
                 extractor.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
@@ -582,6 +591,15 @@ object Compressor {
                 extractor.release()
                 if (muxerStarted) {
                     try { mediaMuxer.stop() } catch (e: Exception) { printException(e) }
+                } else {
+                    // The encoder never published an output format, so no track
+                    // was written — report failure instead of a 0-byte "success".
+                    return Result(
+                        id,
+                        success = false,
+                        failureMessage = "Compression produced no output (the source may be empty or unsupported).",
+                        errorType = CompressionErrorType.UNSUPPORTED,
+                    )
                 }
 
             } catch (exception: Exception) {
