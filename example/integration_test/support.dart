@@ -1,0 +1,51 @@
+// Shared helpers for the integration tests. Not a test file itself (no
+// `_test.dart` suffix), so the runner won't execute it directly.
+
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter_test/flutter_test.dart';
+import 'package:light_compressor_v2/light_compressor_v2.dart';
+
+/// Pubspec-relative key of the bundled sample clip.
+const String kSampleAssetKey = 'integration_test/assets/sample.mp4';
+
+/// Anything smaller than this is treated as the committed placeholder.
+const int _minRealClipBytes = 5000;
+
+/// Reason shown when the placeholder is still in place and a test skips.
+const String kNoClipSkipReason =
+    'Add a real clip at example/$kSampleAssetKey to run this test.';
+
+/// Copies the bundled sample clip to a temp file and returns its path, or null
+/// when the asset is still the placeholder (so callers can skip cleanly).
+Future<String?> prepareSampleSource() async {
+  final ByteData data;
+  try {
+    data = await rootBundle.load(kSampleAssetKey);
+  } catch (_) {
+    // Asset not bundled (e.g. placeholder removed) — let the caller skip.
+    return null;
+  }
+  final Uint8List bytes = data.buffer.asUint8List();
+  if (bytes.length < _minRealClipBytes) return null;
+  final File file = File('${Directory.systemTemp.path}/lc_it_source.mp4');
+  await file.writeAsBytes(bytes, flush: true);
+  return file.path;
+}
+
+/// Asserts the file at [path] is a real, *playable* video: its metadata reads
+/// back with valid dimensions AND a frame can actually be decoded from it
+/// (the latter catches malformed bitstreams that still carry correct metadata).
+Future<void> expectReadableVideo(LightCompressor compressor, String path) async {
+  final MediaInfo info = await compressor.getMediaInfo(path);
+  expect(info.width, isNotNull);
+  expect(info.height, isNotNull);
+  expect((info.width ?? 0) > 0 && (info.height ?? 0) > 0, isTrue);
+
+  // Decode a frame to prove the bitstream is valid, not just well-described.
+  final String thumb = await compressor.getVideoThumbnail(path);
+  expect(File(thumb).existsSync(), isTrue);
+  expect(File(thumb).lengthSync(), greaterThan(0));
+}

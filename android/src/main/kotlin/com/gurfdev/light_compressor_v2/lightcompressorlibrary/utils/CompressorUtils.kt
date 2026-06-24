@@ -8,7 +8,6 @@ import android.media.MediaMetadataRetriever
 import android.os.Build
 import android.util.Log
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoQuality
-import com.gurfdev.light_compressor_v2.lightcompressorlibrary.video.Mp4Movie
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -42,25 +41,6 @@ object CompressorUtils {
         } else {
             heightData.toDouble()
         }
-    }
-
-    /**
-     * Setup movie with the height, width, and rotation values
-     * @param rotation video rotation
-     *
-     * @return set movie with new values
-     */
-    fun setUpMP4Movie(
-        rotation: Int,
-        cacheFile: File,
-    ): Mp4Movie {
-        val movie = Mp4Movie()
-        movie.apply {
-            setCacheFile(cacheFile)
-            setRotation(rotation)
-        }
-
-        return movie
     }
 
     /**

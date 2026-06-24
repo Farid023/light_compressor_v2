@@ -17,7 +17,6 @@ import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUt
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.prepareVideoWidth
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.printException
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.setOutputFileParameters
-import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.setUpMP4Movie
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.StreamableVideo
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.roundDimension
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.video.*
@@ -309,11 +308,17 @@ object Compressor {
                 //input to generate a compressed/smaller size video
                 val bufferInfo = MediaCodec.BufferInfo()
 
-                // Setup mp4 movie
-                val movie = setUpMP4Movie(rotation, cacheFile)
-
-                // MediaMuxer outputs MP4 in this app
-                val mediaMuxer = MP4Builder().createMovie(movie)
+                // Platform MP4 muxer — natively handles AVC and HEVC, so no
+                // codec-specific container code (or a third-party mp4 parser) is
+                // needed. MediaMuxer requires every track to be added before
+                // start(), so it is started lazily once the encoder publishes its
+                // real output format (which carries the codec-specific data).
+                val mediaMuxer = MediaMuxer(
+                    cacheFile.absolutePath,
+                    MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4,
+                )
+                if (rotation != 0) mediaMuxer.setOrientationHint(rotation)
+                var muxerStarted = false
 
                 // Start with video track
                 val videoIndex = findTrack(extractor, isVideo = true)
@@ -321,6 +326,15 @@ object Compressor {
                 extractor.selectTrack(videoIndex)
                 extractor.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
                 val inputFormat = extractor.getTrackFormat(videoIndex)
+
+                // Audio is copied through untouched. Resolve it up front because
+                // every track must be added to MediaMuxer before start().
+                val audioExtractorIndex = findTrack(extractor, isVideo = false)
+                val audioFormat: MediaFormat? =
+                    if (!disableAudio && audioExtractorIndex >= 0)
+                        extractor.getTrackFormat(audioExtractorIndex)
+                    else null
+                var audioMuxerTrackIndex = -1
 
                 val outputFormat: MediaFormat =
                     MediaFormat.createVideoFormat(outputMime, newWidth, newHeight)
@@ -440,9 +454,20 @@ object Compressor {
                                     false
 
                                 encoderStatus == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                                    val newFormat = encoder.outputFormat
-                                    if (videoTrackIndex == -5)
-                                        videoTrackIndex = mediaMuxer.addTrack(newFormat, false)
+                                    // Add every track and start the muxer exactly
+                                    // once, when the encoder publishes its real
+                                    // output format (which carries the csd needed
+                                    // to write a correct avcC/hvcC).
+                                    if (!muxerStarted) {
+                                        videoTrackIndex =
+                                            mediaMuxer.addTrack(encoder.outputFormat)
+                                        if (audioFormat != null) {
+                                            audioMuxerTrackIndex =
+                                                mediaMuxer.addTrack(audioFormat)
+                                        }
+                                        mediaMuxer.start()
+                                        muxerStarted = true
+                                    }
                                 }
 
                                 encoderStatus == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> {
@@ -454,14 +479,14 @@ object Compressor {
                                     val encodedData = encoder.getOutputBuffer(encoderStatus)
                                         ?: throw RuntimeException("encoderOutputBuffer $encoderStatus was null")
 
-                                    if (bufferInfo.size > 1) {
-                                        if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
-                                            mediaMuxer.writeSampleData(
-                                                videoTrackIndex,
-                                                encodedData, bufferInfo, false
-                                            )
-                                        }
-
+                                    if (muxerStarted && bufferInfo.size > 0 &&
+                                        (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0
+                                    ) {
+                                        encodedData.position(bufferInfo.offset)
+                                        encodedData.limit(bufferInfo.offset + bufferInfo.size)
+                                        mediaMuxer.writeSampleData(
+                                            videoTrackIndex, encodedData, bufferInfo
+                                        )
                                     }
 
                                     outputDone =
@@ -546,18 +571,23 @@ object Compressor {
                     try { outputSurface?.release() } catch (ignored: Exception) {}
                 }
 
-                processAudio(
-                    mediaMuxer = mediaMuxer,
-                    bufferInfo = bufferInfo,
-                    disableAudio = disableAudio,
-                    extractor
-                )
+                if (muxerStarted && audioFormat != null && audioMuxerTrackIndex >= 0) {
+                    copyAudioSamples(
+                        mediaMuxer,
+                        audioMuxerTrackIndex,
+                        audioExtractorIndex,
+                        extractor,
+                        bufferInfo,
+                    )
+                }
 
                 extractor.release()
                 try {
-                    mediaMuxer.finishMovie()
+                    if (muxerStarted) mediaMuxer.stop()
                 } catch (e: Exception) {
                     printException(e)
+                } finally {
+                    try { mediaMuxer.release() } catch (ignored: Exception) {}
                 }
 
             } catch (exception: Exception) {
@@ -605,58 +635,61 @@ object Compressor {
         )
     }
 
-    private fun processAudio(
-        mediaMuxer: MP4Builder,
+    /**
+     * Copies the source audio track verbatim into [mediaMuxer]. The track is
+     * already added (MediaMuxer requires that before start()); here we just pump
+     * the encoded audio samples through, unchanged.
+     */
+    private fun copyAudioSamples(
+        mediaMuxer: MediaMuxer,
+        muxerTrackIndex: Int,
+        audioExtractorIndex: Int,
+        extractor: MediaExtractor,
         bufferInfo: MediaCodec.BufferInfo,
-        disableAudio: Boolean,
-        extractor: MediaExtractor
     ) {
-        val audioIndex = findTrack(extractor, isVideo = false)
-        if (audioIndex >= 0 && !disableAudio) {
-            extractor.selectTrack(audioIndex)
-            val audioFormat = extractor.getTrackFormat(audioIndex)
-            val muxerTrackIndex = mediaMuxer.addTrack(audioFormat, true)
-            var maxBufferSize = audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
+        extractor.selectTrack(audioExtractorIndex)
+        val audioFormat = extractor.getTrackFormat(audioExtractorIndex)
+        var maxBufferSize =
+            if (audioFormat.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE))
+                audioFormat.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE)
+            else 0
+        if (maxBufferSize <= 0) maxBufferSize = 64 * 1024
 
-            if (maxBufferSize <= 0) {
-                maxBufferSize = 64 * 1024
+        var buffer: ByteBuffer = ByteBuffer.allocateDirect(maxBufferSize)
+        if (Build.VERSION.SDK_INT >= 28) {
+            val size = extractor.sampleSize
+            if (size > maxBufferSize) {
+                maxBufferSize = (size + 1024).toInt()
+                buffer = ByteBuffer.allocateDirect(maxBufferSize)
             }
+        }
 
-            var buffer: ByteBuffer = ByteBuffer.allocateDirect(maxBufferSize)
-            if (Build.VERSION.SDK_INT >= 28) {
-                val size = extractor.sampleSize
-                if (size > maxBufferSize) {
-                    maxBufferSize = (size + 1024).toInt()
-                    buffer = ByteBuffer.allocateDirect(maxBufferSize)
-                }
-            }
-            var inputDone = false
-            extractor.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-
-            while (!inputDone) {
-                val index = extractor.sampleTrackIndex
-                if (index == audioIndex) {
-                    bufferInfo.size = extractor.readSampleData(buffer, 0)
-
-                    if (bufferInfo.size >= 0) {
-                        bufferInfo.apply {
-                            presentationTimeUs = extractor.sampleTime
-                            offset = 0
-                            flags = MediaCodec.BUFFER_FLAG_KEY_FRAME
-                        }
-                        mediaMuxer.writeSampleData(muxerTrackIndex, buffer, bufferInfo, true)
+        extractor.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+        var inputDone = false
+        while (!inputDone) {
+            when (extractor.sampleTrackIndex) {
+                audioExtractorIndex -> {
+                    val chunkSize = extractor.readSampleData(buffer, 0)
+                    if (chunkSize >= 0) {
+                        bufferInfo.offset = 0
+                        bufferInfo.size = chunkSize
+                        bufferInfo.presentationTimeUs = extractor.sampleTime
+                        bufferInfo.flags =
+                            if ((extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0)
+                                MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
+                        buffer.position(0)
+                        buffer.limit(chunkSize)
+                        mediaMuxer.writeSampleData(muxerTrackIndex, buffer, bufferInfo)
                         extractor.advance()
-
                     } else {
-                        bufferInfo.size = 0
                         inputDone = true
                     }
-                } else if (index == -1) {
-                    inputDone = true
                 }
+                -1 -> inputDone = true
+                else -> extractor.advance()
             }
-            extractor.unselectTrack(audioIndex)
         }
+        extractor.unselectTrack(audioExtractorIndex)
     }
 
     /**
