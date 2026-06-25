@@ -81,6 +81,18 @@ void main() {
         throwsA(isA<AssertionError>()),
       );
     });
+
+    test('videoFps defaults to null and can be set', () {
+      expect(Video(videoName: 'test.mp4').videoFps, isNull);
+      expect(Video(videoName: 'test.mp4', videoFps: 24).videoFps, 24);
+    });
+
+    test('asserts videoFps is positive', () {
+      expect(
+        () => Video(videoName: 't.mp4', videoFps: 0),
+        throwsA(isA<AssertionError>()),
+      );
+    });
   });
 
   group('CompressionResult', () {

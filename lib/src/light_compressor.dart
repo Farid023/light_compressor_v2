@@ -147,6 +147,7 @@ class LightCompressor {
                 : null,
             'videoHeight': video.videoHeight,
             'videoWidth': video.videoWidth,
+            'videoFps': video.videoFps,
             'videoName': video.videoName,
             'saveInGallery': ios.saveInGallery,
             'videoFormat': videoFormat.name,
@@ -243,6 +244,7 @@ class LightCompressor {
     int? videoHeight,
     int? videoBitrateInMbps,
     int? targetSizeMb,
+    int? videoFps,
     bool disableAudio = false,
     bool isMinBitrateCheckEnabled = true,
     VideoFormat videoFormat = VideoFormat.h264,
@@ -260,6 +262,7 @@ class LightCompressor {
       targetSizeMb == null || targetSizeMb > 0,
       'targetSizeMb must be greater than 0',
     );
+    assert(videoFps == null || videoFps > 0, 'videoFps must be greater than 0');
     if (paths.isEmpty) {
       return <Result>[];
     }
@@ -279,6 +282,7 @@ class LightCompressor {
           'targetSizeBytes': targetSizeMb != null
               ? targetSizeMb * 1000 * 1000
               : null,
+          'videoFps': videoFps,
           'disableAudio': disableAudio,
           'isMinBitrateCheckEnabled': isMinBitrateCheckEnabled,
           'videoFormat': videoFormat.name,

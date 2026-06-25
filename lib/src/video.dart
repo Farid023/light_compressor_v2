@@ -10,6 +10,7 @@ class Video {
     this.videoHeight,
     this.videoWidth,
     this.targetSizeMb,
+    this.videoFps,
   }) : assert(
          targetSizeMb == null || videoBitrateInMbps == null,
          'targetSizeMb and videoBitrateInMbps are mutually exclusive',
@@ -17,6 +18,10 @@ class Video {
        assert(
          targetSizeMb == null || targetSizeMb > 0,
          'targetSizeMb must be greater than 0',
+       ),
+       assert(
+         videoFps == null || videoFps > 0,
+         'videoFps must be greater than 0',
        );
 
   /// The name of the output video file (e.g., `compressed_video.mp4`).
@@ -58,4 +63,12 @@ class Video {
   /// output resolution is honoured as closely as the bitrate floor allows, and
   /// reported via `OnSuccess.targetSizeMet`.
   final int? targetSizeMb;
+
+  /// A target output frame rate, in frames per second.
+  ///
+  /// When set **and lower** than the source frame rate, the compressor drops
+  /// frames to land at approximately this rate. It only ever downsamples — a
+  /// value at or above the source fps leaves the frame rate unchanged (frames
+  /// are never duplicated). Must be greater than 0.
+  final int? videoFps;
 }

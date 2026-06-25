@@ -1021,5 +1021,56 @@ void main() {
 
       expect((results.first as OnSuccess).targetSizeMet, isFalse);
     });
+
+    // --- Phase 8b: frame-rate downsampling ---
+
+    test('compressVideo forwards videoFps', () async {
+      mockedResponse = jsonEncode({'onSuccess': '/path/to/output.mp4'});
+
+      await compressor.compressVideo(
+        path: '/path/to/input.mp4',
+        videoQuality: VideoQuality.medium,
+        video: Video(videoName: 'output.mp4', videoFps: 24),
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+      );
+
+      final arguments = log.first.arguments as Map<dynamic, dynamic>;
+      expect(arguments['videoFps'], 24);
+    });
+
+    test('compressVideo sends a null videoFps when not requested', () async {
+      mockedResponse = jsonEncode({'onSuccess': '/path/to/output.mp4'});
+
+      await compressor.compressVideo(
+        path: '/path/to/input.mp4',
+        videoQuality: VideoQuality.medium,
+        video: Video(videoName: 'output.mp4'),
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+      );
+
+      final arguments = log.first.arguments as Map<dynamic, dynamic>;
+      expect(arguments.containsKey('videoFps'), isTrue);
+      expect(arguments['videoFps'], isNull);
+    });
+
+    test('compressVideos forwards videoFps', () async {
+      batchResponse = <Map<String, dynamic>>[
+        {'onSuccess': '/out0.mp4'},
+      ];
+
+      await compressor.compressVideos(
+        paths: ['/a.mp4'],
+        videoNames: ['out0.mp4'],
+        videoQuality: VideoQuality.medium,
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+        videoFps: 24,
+      );
+
+      final args = log.last.arguments as Map<dynamic, dynamic>;
+      expect(args['videoFps'], 24);
+    });
   });
 }
