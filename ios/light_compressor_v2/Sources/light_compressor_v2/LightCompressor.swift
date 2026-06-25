@@ -254,6 +254,106 @@ public struct LightCompressor {
         return outURL.path
     }
 
+    /// Generates several thumbnails from one source in a single call, returning
+    /// their file paths in the same order as [requests]. Each request is a map
+    /// with `"positionInMs"` and `"quality"`.
+    ///
+    /// - Throws: [MediaError.notFound] or [MediaError.thumbnailFailed].
+    static func thumbnails(for path: String, requests: [[String: Any]]) throws -> [String] {
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw MediaError.notFound
+        }
+        let url = URL(fileURLWithPath: path)
+        let asset = AVURLAsset(url: url)
+        let durationSeconds = CMTimeGetSeconds(asset.duration)
+
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 1, preferredTimescale: 600)
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 1, preferredTimescale: 600)
+
+        var paths: [String] = []
+        for request in requests {
+            let positionInMs = max(0, (request["positionInMs"] as? Int) ?? 0)
+            let quality = min(max((request["quality"] as? Int) ?? 50, 0), 100)
+            var seconds = Double(positionInMs) / 1000.0
+            if durationSeconds.isFinite && durationSeconds > 0 {
+                seconds = min(seconds, max(0, durationSeconds - 0.05))
+            }
+            let time = CMTime(seconds: seconds, preferredTimescale: 600)
+            guard let cgImage = try? generator.copyCGImage(at: time, actualTime: nil) else {
+                throw MediaError.thumbnailFailed
+            }
+            let outURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("thumb_\(UUID().uuidString).jpg")
+            guard writeJPEG(cgImage, to: outURL, quality: Double(quality) / 100.0) else {
+                throw MediaError.thumbnailFailed
+            }
+            paths.append(outURL.path)
+        }
+        return paths
+    }
+
+    /// Predicts the output of compressing the video at [path] **without**
+    /// transcoding it, reusing the same bitrate and resize math as
+    /// `compressVideo`. The figures are approximate.
+    ///
+    /// - Returns: a dictionary matching the keys parsed by `CompressionEstimate`.
+    /// - Throws: [MediaError.notFound] or [MediaError.unreadable].
+    func estimate(
+        for path: String,
+        quality: VideoQuality,
+        keepOriginalResolution: Bool,
+        videoSize: CGSize?,
+        videoBitrateInMbps: Int?,
+        disableAudio: Bool
+    ) throws -> [String: Any] {
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw MediaError.notFound
+        }
+        let url = URL(fileURLWithPath: path)
+        let asset = AVURLAsset(url: url)
+        guard let track = asset.tracks(withMediaType: .video).first else {
+            throw MediaError.unreadable
+        }
+
+        let naturalSize = track.naturalSize
+        let durationSeconds = max(0, CMTimeGetSeconds(asset.duration))
+
+        // Output resolution — identical to compressVideo.
+        let size: (width: Int, height: Int) = videoSize == nil
+            ? generateWidthAndHeight(
+                width: naturalSize.width,
+                height: naturalSize.height,
+                keepOriginalResolution: keepOriginalResolution)
+            : (Int(videoSize!.width), Int(videoSize!.height))
+
+        // Target video bitrate — the same value compressVideo would request.
+        let targetBitrate = videoBitrateInMbps == nil
+            ? getBitrate(bitrate: track.estimatedDataRate, quality: quality)
+            : videoBitrateInMbps! * 1_000_000
+
+        let hasAudio = !asset.tracks(withMediaType: .audio).isEmpty
+        let audioBitrate = (disableAudio || !hasAudio) ? 0 : 128_000
+
+        let estimatedSize = Int(
+            (Double(targetBitrate + audioBitrate) / 8.0 * durationSeconds * 1.02).rounded())
+        let originalSize = (try? FileManager.default
+            .attributesOfItem(atPath: path))?[.size] as? Int ?? 0
+        let ratio = originalSize > 0
+            ? min(100.0, max(0.0, (1.0 - Double(estimatedSize) / Double(originalSize)) * 100.0))
+            : 0.0
+
+        return [
+            "originalSizeBytes": originalSize,
+            "estimatedSizeBytes": estimatedSize,
+            "targetBitrate": targetBitrate,
+            "outputWidth": size.width,
+            "outputHeight": size.height,
+            "estimatedRatio": ratio,
+        ]
+    }
+
     // MARK: - Media helpers
 
     /// Writes [image] as JPEG to [url] using ImageIO (available on iOS & macOS).
