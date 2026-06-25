@@ -36,12 +36,20 @@ class _SingleCompressViewState extends State<SingleCompressView>
   String? _error;
   bool _runInBackground = false;
   VideoFormat _videoFormat = VideoFormat.h264;
+  final TextEditingController _targetSizeController = TextEditingController();
+
+  @override
+  void dispose() {
+    _targetSizeController.dispose();
+    super.dispose();
+  }
 
   Future<void> _pickVideo() async {
     final result = await FilePicker.platform.pickFiles(type: FileType.video);
     final path = result?.files.first.path;
     if (path == null) return;
 
+    _targetSizeController.clear();
     setState(() {
       _stage = _Stage.ready;
       _sourcePath = path;
@@ -117,12 +125,15 @@ class _SingleCompressViewState extends State<SingleCompressView>
     });
 
     final videoName = 'LC-${DateTime.now().millisecondsSinceEpoch}.mp4';
+    final parsedTarget = int.tryParse(_targetSizeController.text.trim());
+    final targetSizeMb =
+        (parsedTarget != null && parsedTarget > 0) ? parsedTarget : null;
     try {
       final result = await widget.compressor.compressVideo(
         path: path,
         videoQuality: VideoQuality.medium,
         isMinBitrateCheckEnabled: false,
-        video: Video(videoName: videoName),
+        video: Video(videoName: videoName, targetSizeMb: targetSizeMb),
         android: AndroidConfig(isSharedStorage: true, saveAt: SaveAt.Movies),
         ios: IOSConfig(saveInGallery: false),
         videoFormat: _videoFormat,
@@ -195,6 +206,20 @@ class _SingleCompressViewState extends State<SingleCompressView>
                     () => _videoFormat =
                         value ? VideoFormat.h265 : VideoFormat.h264,
                   ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: TextField(
+            controller: _targetSizeController,
+            enabled: _stage != _Stage.compressing,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Max output size (MB) — optional',
+              helperText:
+                  'Compress to about this size; blank uses medium quality',
+              isDense: true,
+            ),
+          ),
         ),
         if (_info != null || _thumbnailPath != null) ...[
           const SizedBox(height: 16),
@@ -419,6 +444,17 @@ class _ResultCard extends StatelessWidget {
               Text(
                 'Duration: ${formatDuration(Duration(milliseconds: (result.duration * 1000).round()))}',
               ),
+              if (!result.targetSizeMet)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Target size could not be met — used the resolution floor.',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.orange.shade800,
+                    ),
+                  ),
+                ),
               const SizedBox(height: 12),
               OutlinedButton.icon(
                 onPressed: () => Navigator.of(context).push(
