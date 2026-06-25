@@ -463,8 +463,6 @@ public struct LightCompressor {
                     targetSizeBytes: targetBytes,
                     durationSeconds: durationInSeconds,
                     sourceBitrate: bitrate,
-                    outputWidth: size.width,
-                    outputHeight: size.height,
                     disableAudio: configuration.disableAudio,
                     hasAudio: !videoAsset.tracks(withMediaType: .audio).isEmpty)
                 newBitrate = solved.bitrate
@@ -647,8 +645,6 @@ public struct LightCompressor {
         targetSizeBytes: Int,
         durationSeconds: Double,
         sourceBitrate: Float,
-        outputWidth: Int,
-        outputHeight: Int,
         disableAudio: Bool,
         hasAudio: Bool
     ) -> (bitrate: Int, met: Bool) {
@@ -658,23 +654,13 @@ public struct LightCompressor {
         let videoBudgetBits = totalBudgetBits * 0.97 - audioBits
         let solvedBps = durationSeconds > 0 ? videoBudgetBits / durationSeconds : 0.0
         let source = Double(sourceBitrate)
-        // Floor can't exceed the source (never upscale).
-        let floor = min(Double(Self.floorBitrate(width: outputWidth, height: outputHeight)), source)
+        // Quality floor: keep at least MIN_BITRATE but never exceed the source
+        // (a sub-floor source can't be compressed further). A target below this
+        // lands at the floor and reports met = false.
+        let floor = min(Double(Self.MIN_BITRATE), source)
         let met = solvedBps >= floor
         let clamped = min(max(solvedBps, floor), source)
         return (Int(clamped), met)
-    }
-
-    /// Resolution-scaled bitrate floor (bps), mirroring the Android engine so
-    /// the two platforms agree on how aggressively a target size may compress.
-    private static func floorBitrate(width: Int, height: Int) -> Int {
-        let pixels = width * height
-        switch pixels {
-        case let p where p >= 1920 * 1080: return 12_000_000
-        case let p where p >= 1280 * 720:  return 6_000_000
-        case let p where p >= 854 * 480:   return 3_000_000
-        default:                           return Int(MIN_BITRATE)
-        }
     }
 
     private func generateWidthAndHeight(

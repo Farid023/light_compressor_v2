@@ -245,13 +245,11 @@ object Compressor {
                 val videoBudgetBits = totalBudgetBits * 0.97 - audioBits
                 val solvedBps =
                     if (durationSec > 0) videoBudgetBits / durationSec else 0.0
-                // Floor scaled to the output resolution (don't crush HD), capped
-                // at the source bitrate (never upscale). targetSizeMet is false
-                // when the floor forces the output above the solved budget.
-                val floor = minOf(
-                    estimateBitrateFromResolution(newWidth.toDouble(), newHeight.toDouble()),
-                    actualBitrate,
-                ).toDouble()
+                // Quality floor: keep at least MIN_BITRATE but never exceed the
+                // source (a sub-floor source can't be compressed further). A
+                // target below this lands at the floor and reports
+                // targetSizeMet = false.
+                val floor = minOf(MIN_BITRATE, actualBitrate).toDouble()
                 targetSizeMet = solvedBps >= floor
                 solvedBps.coerceIn(floor, actualBitrate.toDouble()).toInt()
             }
