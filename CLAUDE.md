@@ -1,0 +1,325 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+`light_compressor_v2` is a **Flutter plugin** that compresses videos — one at a
+time or in batches — using **each platform's native codecs**: Android
+`MediaCodec` / `MediaMuxer`, Apple `AVFoundation`. It also exposes media-info,
+thumbnail extraction, cancellation, progress streams, optional background
+execution, and H.264 / H.265 (HEVC) selection with automatic fallback.
+
+Published to pub.dev (version in [`pubspec.yaml`](pubspec.yaml)). The
+**consumer-facing** API and every option are documented in [`README.md`](README.md);
+this file is the **contributor** view — how the layers fit together and what must
+not break.
+
+> **There is no ffmpeg/ffprobe anywhere in this project, and none may ever be
+> added** — not in the library, the example app, or in tests / manual
+> verification. Everything is native codecs. This is a hard constraint.
+
+## Repository layout
+
+| Path | What lives there |
+|------|------------------|
+| [`lib/`](lib/) | The pure-Dart public API and the platform-channel client. |
+| [`android/`](android/) | Android plugin (Kotlin): a thin Flutter bridge + a vendored `MediaCodec`/`MediaMuxer` transcode engine. |
+| [`ios/`](ios/) | iOS plugin (Swift): Flutter bridge + an `AVFoundation` engine, as a SwiftPM package + podspec. |
+| [`macos/`](macos/) | macOS plugin (Swift): near-mirror of iOS; engine is byte-identical, the plugin file differs. |
+| [`example/`](example/) | Demo app **and** the integration tests that exercise the real native pipeline. |
+| [`test/`](test/) | Dart-only unit tests (no device needed). |
+| [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | CI: format + analyze + unit tests on every push/PR. |
+
+The four platform layers talk to each other **only** through the platform-channel
+contract below. Keeping that contract in lock-step across Dart + all three
+natives is the single most important invariant in the repo.
+
+---
+
+## The platform-channel contract (the spine)
+
+One `MethodChannel` + two `EventChannel`s, declared with identical names in Dart
+([`lib/src/light_compressor.dart`](lib/src/light_compressor.dart)) and every native
+plugin:
+
+- **MethodChannel `light_compressor`** — methods: `startCompression`,
+  `startBatchCompression`, `cancelCompression`, `clearCache`, `getMediaInfo`,
+  `getVideoThumbnail`.
+- **EventChannel `compression/stream`** — single-video progress: a bare `double`
+  `0`–`100`.
+- **EventChannel `compression/batch-stream`** — batch events: maps tagged
+  `type: "progress"` (`index`, `percent`, `overallPercent`) or `type: "result"`
+  (an `index` plus a result map).
+
+**Result maps** (what the natives send back; parsed by `_resultFromMap` in
+[`lib/src/light_compressor.dart`](lib/src/light_compressor.dart)):
+
+- success → `{ onSuccess: <path>, originalSize, compressedSize, duration, usedFormat: "h264"|"h265", index }`
+- failure → `{ onFailure: <message>, failureType: "permission"|"unsupported"|"notFound"|"unknown", index }`
+- cancelled → `{ onCancelled: true }`
+
+**Wire encoding differs per method — easy to get wrong:**
+
+- `startCompression` returns a **JSON string** (Android `gson.toJson`, Apple
+  `Encodable.toJson`) that Dart `jsonDecode`s.
+- `startBatchCompression` returns a **`List` of maps directly** (no JSON string).
+- `getMediaInfo` returns a map; `getVideoThumbnail` returns a path string. Both
+  report errors as a `PlatformException` (`result.error(code, …)`) with codes
+  `VIDEO_NOT_FOUND` / `PERMISSION_DENIED` / `UNSUPPORTED_VIDEO` /
+  `MEDIA_INFO_FAILED` / `THUMBNAIL_FAILED`.
+
+The `failureType` string values are matched **verbatim** on every side —
+Kotlin `CompressionErrorType.toWireValue()`, Swift `MediaError.type.rawValue`,
+Dart `_failureTypeFromWire` / `_exceptionFor`. **Change one, change all four.**
+
+## Cross-cutting invariants (don't regress these)
+
+- **Reply once.** A platform `Result` / `FlutterResult` may be answered exactly
+  once, but a cancelled run can fire more than one terminal callback. The
+  single-compress path guards with `replyOnce` (an `AtomicBoolean` on Android, a
+  `didReply` flag on Apple); batch de-dups per index (`results[index] == null`).
+  Never add a path that can reply twice — it crashes the engine.
+- **Batch order + resilience.** Results return in the same order as the input
+  `paths`, and one video failing must never abort the others (its slot becomes an
+  `OnFailure`). Verified by the *batch resilience* group in
+  [`example/integration_test/plugin_integration_test.dart`](example/integration_test/plugin_integration_test.dart).
+- **HEVC fallback is silent.** `videoFormat: h265` falls back to H.264 when the
+  device has no hardware HEVC encoder; the caller learns the truth only from
+  `OnSuccess.usedFormat`. Never *fail* just because HEVC is unavailable.
+- **Native-reported sizes win.** Output may land in scoped/shared storage that
+  Dart's `File` cannot stat, so Dart prefers the native `originalSize` /
+  `compressedSize` and only falls back to reading the file when they are absent.
+
+---
+
+## Dart layer — [`lib/`](lib/)
+
+[`lib/light_compressor_v2.dart`](lib/light_compressor_v2.dart) is a barrel
+re-exporting everything under `src/`. This layer is the **only** place that
+encodes/decodes the channel contract.
+
+- **[`src/light_compressor.dart`](lib/src/light_compressor.dart)** — the heart.
+  The `LightCompressor` **singleton** (`factory LightCompressor() => _instance`)
+  owning the one `MethodChannel` and two `EventChannel`s. Holds: the API methods
+  (`compressVideo`, `compressVideos`, `getMediaInfo`, `getVideoThumbnail`,
+  `clearCache`, `cancelCompression`); the lazy broadcast streams
+  `onProgressUpdated` (`Stream<double>`) and `onBatchUpdate` (`Stream<BatchEvent>`);
+  `_resultFromMap` (the decoder shared by the batch return value and
+  `BatchItemCompleted` events); the wire decoders `_videoFormatFromWire` /
+  `_failureTypeFromWire`; the failure→exception mappers `_exceptionFor` (compress)
+  and `_mapPlatformException` (media-info/thumbnail); and the `VideoQuality` enum.
+- **[`src/compression_result.dart`](lib/src/compression_result.dart)** — the
+  `Result` type and its `OnSuccess` / `OnFailure` / `OnCancelled` subtypes, plus
+  the `CompressionFailureType` enum.
+- **[`src/batch_event.dart`](lib/src/batch_event.dart)** — `BatchEvent` with
+  `BatchProgress` and `BatchItemCompleted`.
+- **[`src/media_info.dart`](lib/src/media_info.dart)** — `MediaInfo` + `fromMap`;
+  exposes encoded `width`/`height` and rotation-aware `displayWidth`/`displayHeight`.
+- **[`src/exceptions.dart`](lib/src/exceptions.dart)** — `LightCompressorException`
+  base + `PermissionDeniedException`, `UnsupportedVideoException`,
+  `VideoNotFoundException`, `MediaInfoException`, `ThumbnailException`.
+- **Option models** — [`src/video.dart`](lib/src/video.dart) (output
+  name/size/bitrate), [`src/video_format.dart`](lib/src/video_format.dart)
+  (`VideoFormat { h264, h265 }`),
+  [`src/android_config.dart`](lib/src/android_config.dart) (`AndroidConfig` +
+  `SaveAt`), [`src/ios_config.dart`](lib/src/ios_config.dart) (`IOSConfig`),
+  [`src/background_config.dart`](lib/src/background_config.dart) (`BackgroundConfig`
+  with `toMap()` — the shape the natives parse).
+
+**Behaviour to preserve:**
+
+- **Argument-map keys are the contract.** The keys passed to `invokeMethod`
+  (`videoName`, `isMinBitrateCheckEnabled`, `saveAt`, `videoFormat`,
+  `background`, …) must match the keys the natives read via `call.argument(...)` /
+  `args[...]`. Renaming a key here means renaming it in all three natives.
+- **Two failure-delivery modes, kept distinct:** `compressVideo` /
+  `compressVideos` *throw* a typed exception only for a **classified** failure
+  (via `_exceptionFor`) and otherwise *return* `OnFailure` (batch slots never
+  throw); `getMediaInfo` / `getVideoThumbnail` *always throw* on error (mapping a
+  native `PlatformException` code).
+- **Defensive numeric parsing** — channel numbers arrive as `int` or `double`
+  unpredictably; always coerce with `(x as num?)?.toDouble()` / `.toInt()`.
+- `compressVideos` short-circuits an empty `paths` list to `[]` and asserts
+  `paths.length == videoNames.length` before touching the channel.
+
+---
+
+## Android layer — [`android/`](android/)
+
+Two distinct parts: a thin Flutter **bridge** and a vendored **transcode engine**.
+
+**Bridge** — [`LightCompressorPlugin.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/LightCompressorPlugin.kt)
+implements `MethodCallHandler` + `EventChannel.StreamHandler` + `ActivityAware`.
+It parses the argument map, requests storage permission in an API-level-aware way
+(`READ_MEDIA_VIDEO` on API 33+, `READ/WRITE_EXTERNAL_STORAGE` on legacy), drives
+`VideoCompressor.start`, and marshals the `CompressionListener` callbacks into
+result maps (via `replyOnce` for single / per-index `record` for batch). It also
+implements `getMediaInfo` / `getVideoThumbnail` with `MediaMetadataRetriever` on a
+worker thread, and `clearCache` (deletes `.mp4`/`.jpg` from the app cache dir).
+
+**Engine** — [`lightcompressorlibrary/`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/),
+a vendored fork of the LightCompressor library:
+
+- [`VideoCompressor.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/VideoCompressor.kt)
+  — entry `object` (a `MainScope` coroutine scope). `start()` validates, then
+  `doVideoCompression()` launches one `Dispatchers.IO` coroutine per URI, **bounded
+  by `Semaphore(MAX_CONCURRENT_COMPRESSIONS = 2)`** — running a whole batch in
+  parallel oversubscribes the hardware codecs and surfaces as "Surface frame wait
+  timed out". `cancel()` flips `isRunning = false` and cancels all jobs.
+  `classifyThrowable` maps `SecurityException`→`PERMISSION`,
+  `FileNotFoundException`→`NOT_FOUND`, else `UNKNOWN`. Also defines the
+  `VideoQuality` and `VideoFormat` enums.
+- [`compressor/Compressor.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/compressor/Compressor.kt)
+  — the actual decode→GL→encode→`MediaMuxer` pipeline; the `@Volatile isRunning`
+  flag lives here.
+- [`config/Configuration.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/config/Configuration.kt)
+  — the `Configuration` settings data class **and** the `StorageConfiguration`
+  strategies that decide where output lands: `SharedStorageConfiguration`
+  (MediaStore), `AppSpecificStorageConfiguration` (app `filesDir`),
+  `CacheStorageConfiguration`, plus the `SaveLocation` enum.
+  [`config/VideoResizer.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/config/VideoResizer.kt)
+  is the output-resolution math (`auto` / `scale` / `limitSize` / `matchSize`).
+- [`video/InputSurface.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/video/InputSurface.kt),
+  [`OutputSurface.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/video/OutputSurface.kt),
+  [`TextureRenderer.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/video/TextureRenderer.kt)
+  — the EGL/OpenGL surfaces (EGL14 context + `SurfaceTexture` + GLES2 shaders)
+  that pipe decoder output into encoder input.
+  [`video/Result.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/video/Result.kt)
+  is the internal transcode result.
+- [`utils/`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/utils/)
+  — `CompressorUtils.kt` (bitrate / codec-capability / track helpers: `getBitrate`,
+  `findTrack`, `isHevcHardwareEncoderAvailable`, `setOutputFileParameters`, …),
+  `FileUtils.kt` (the `saveVideoInExternal` MediaStore writer used by shared
+  storage), `NumbersUtils.kt` (dimension rounding).
+- [`CompressionInterface.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/CompressionInterface.kt)
+  — the threading-annotated `CompressionListener` and the `CompressionErrorType`
+  enum with `toWireValue()` (the source of the `failureType` strings).
+
+**Background execution** —
+[`CompressionForegroundService.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/CompressionForegroundService.kt)
+(ongoing notification with live progress + a Cancel action) and
+[`CompressionCancelReceiver.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/CompressionCancelReceiver.kt),
+both declared in
+[`AndroidManifest.xml`](android/src/main/AndroidManifest.xml) along with the
+foreground-service / notification permissions.
+
+**Build** — Kotlin DSL ([`build.gradle.kts`](android/build.gradle.kts)), **minSdk 24**.
+Built through the example app, not standalone.
+
+---
+
+## Apple layers — [`ios/`](ios/) and [`macos/`](macos/)
+
+Each is a SwiftPM package (`…/Package.swift`) **plus** a CocoaPods podspec
+(`…/light_compressor_v2.podspec`); Flutter ≥ 3.24 prefers SwiftPM and falls back
+to CocoaPods. Sources sit under `…/Sources/light_compressor_v2/`:
+
+- **Bridge** — iOS
+  [`SwiftLightCompressorPlugin.swift`](ios/light_compressor_v2/Sources/light_compressor_v2/SwiftLightCompressorPlugin.swift)
+  / macOS
+  [`LightCompressorPlugin.swift`](macos/light_compressor_v2/Sources/light_compressor_v2/LightCompressorPlugin.swift)
+  — registers the three channels, dispatches the methods, applies `replyOnce` /
+  per-index `record`, saves to the Photos library when `saveInGallery`, and
+  implements `getMediaInfo` / `getVideoThumbnail` / `clearCache`. A nested
+  `BatchStreamHandler` backs the batch EventChannel.
+- **Engine** — `LightCompressor.swift` — the `AVFoundation` transcoder:
+  `AVAssetReader` → `AVAssetWriter` (created with `fileType: .mp4` so the
+  container matches the `.mp4` name), quality→bitrate math, HEVC selection with
+  silent H.264 fallback, progress + completion callbacks, the typed `MediaError`,
+  and the static `mediaInfo` / `thumbnail` / `clearCache` helpers. The `cancel`
+  flag rides on the returned `Compression` handle.
+- **`extensions/Encodable.swift`** — the `toJson` used to encode the
+  single-compress reply.
+
+> **Sync rule (important).** The **engine** (`LightCompressor.swift`) and
+> `extensions/Encodable.swift` are **byte-identical** between `ios/` and `macos/`
+> — edit the iOS copy, then copy it verbatim to macOS. The **plugin files are
+> NOT identical** and must be edited per-platform: macOS imports `FlutterMacOS`
+> (vs `Flutter`), is named `LightCompressorPlugin` (vs `SwiftLightCompressorPlugin`),
+> is written in an older inlined style, and adds a macOS-only `BackgroundExecution`
+> class. **Never blind-copy the plugin file across platforms.**
+
+**Background behaviour differs by design:** iOS has **no** background support
+(the OS suspends transcoding); macOS suppresses **App Nap** via
+`BackgroundExecution` (`ProcessInfo.beginActivity(.idleSystemSleepDisabled)`) when
+a `BackgroundConfig` is passed — its notification fields are ignored.
+
+**Minimum versions:** iOS 11, macOS 10.15. Photo-library save needs
+`NSPhotoLibraryUsageDescription` in the host app's Info.plist.
+
+---
+
+## Example app & integration tests — [`example/`](example/)
+
+The demo app is also the only place the native pipeline runs end-to-end.
+
+- **App** — [`lib/main.dart`](example/lib/main.dart),
+  [`lib/single_compress_view.dart`](example/lib/single_compress_view.dart),
+  [`lib/batch_compress_view.dart`](example/lib/batch_compress_view.dart),
+  [`lib/video_player.dart`](example/lib/video_player.dart),
+  [`lib/utils/file_utils.dart`](example/lib/utils/file_utils.dart). Uses
+  `file_picker` to choose sources and `video_player` to preview output.
+- **Integration tests** (run on a real device/emulator/simulator):
+  - [`integration_test/plugin_integration_test.dart`](example/integration_test/plugin_integration_test.dart)
+    — the main suite: metadata, thumbnails, options, progress streams,
+    cancellation, lifecycle, and the *batch resilience* group (one bad path must
+    not sink the others; input order preserved).
+  - [`integration_test/hevc_compression_test.dart`](example/integration_test/hevc_compression_test.dart)
+    — H.264 / H.265 selection and the automatic fallback (`usedFormat`).
+  - [`integration_test/support.dart`](example/integration_test/support.dart) —
+    shared helpers (e.g. `expectReadableVideo`).
+  - `integration_test/assets/sample.mp4` — a short sample clip the tests feed in
+    (loaded via `prepareSampleSource()` in `support.dart`). The tests **skip
+    cleanly when it is absent or still the committed placeholder** (anything under
+    ~5 KB is treated as the placeholder). The clip is excluded from the published
+    package — see `.pubignore`.
+
+---
+
+## Common commands
+
+```bash
+# Dart unit tests (no device needed).
+flutter test
+flutter test test/models_test.dart                   # one file
+flutter test --plain-name "keeps input order"         # one test by name
+
+# Static analysis + formatting (CI gates; both must be clean).
+flutter analyze
+dart format .                                         # apply
+dart format --output=none --set-exit-if-changed .     # check only (as CI runs it)
+
+# Integration tests — REAL native pipeline; require a device/emulator/simulator.
+flutter devices
+cd example
+flutter test integration_test/plugin_integration_test.dart -d <deviceId>
+flutter test integration_test/hevc_compression_test.dart   -d <deviceId>
+
+# Run the demo app (also how the native code gets compiled).
+cd example && flutter run
+
+# Pre-publish dry run (uses .pubignore, not .gitignore, for the archive).
+flutter pub publish --dry-run
+```
+
+Native code is built **through the example app** — there is no standalone plugin
+build step.
+
+## Conventions & release notes
+
+- **Native codecs only** — never ffmpeg/ffprobe, anywhere, ever (see top).
+- **Apple sync rule** — engine + `Encodable.swift` are copy-identical iOS↔macOS;
+  plugin files are per-platform (see the Apple section).
+- **Strict lint.** [`analysis_options.yaml`](analysis_options.yaml) enables a
+  large explicit rule set (e.g. `always_specify_types`, `prefer_single_quotes`,
+  `sort_constructors_first`, `directives_ordering`) — *not* stock `flutter_lints`.
+  `flutter analyze` must be clean.
+- **Source and code comments are in English** (user-facing communication is in
+  Russian).
+- **Releasing:** bump the version in [`pubspec.yaml`](pubspec.yaml) and add a
+  [`CHANGELOG.md`](CHANGELOG.md) entry; [`.pubignore`](.pubignore) (which pub uses
+  *instead of* `.gitignore`) controls what ships. `git push` and
+  `flutter pub publish` are done by the maintainer — the agent environment has no
+  git credentials.
+- **Commit messages** carry no `Co-Authored-By` / agent-attribution trailer.

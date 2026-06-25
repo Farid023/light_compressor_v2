@@ -29,5 +29,6 @@ android/local.properties
 # macOS Finder
 .DS_Store
 
-# Internal planning notes — not part of the package
+# Internal docs — not part of the package
+CLAUDE.md
 implementation_plan.md
