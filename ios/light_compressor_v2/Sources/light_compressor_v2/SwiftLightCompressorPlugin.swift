@@ -100,6 +100,8 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
         let videoWidth         = args["videoWidth"]         as? Int
         let targetSizeBytes    = args["targetSizeBytes"]    as? Int
         let videoFps           = args["videoFps"]           as? Int
+        let audioBitrate       = args["audioBitrate"]       as? Int
+        let audioSampleRate    = args["audioSampleRate"]    as? Int
 
         let destinationURL = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("\(videoName).mp4")
@@ -139,7 +141,9 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
                         videoSize: videoSize,
                         videoFormat: videoFormat,
                         targetSizeBytes: targetSizeBytes,
-                        videoFps: videoFps))
+                        videoFps: videoFps,
+                        audioBitrate: audioBitrate,
+                        audioSampleRate: audioSampleRate))
             ],
             progressQueue: .main,
             progressHandler: { [weak self] _, progress in
@@ -227,6 +231,8 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
         let videoBitrateInMbps = args["videoBitrateInMbps"] as? Int
         let targetSizeBytes    = args["targetSizeBytes"]    as? Int
         let videoFps           = args["videoFps"]           as? Int
+        let audioBitrate       = args["audioBitrate"]       as? Int
+        let audioSampleRate    = args["audioSampleRate"]    as? Int
         let videoHeight        = args["videoHeight"]        as? Int
         let videoWidth         = args["videoWidth"]         as? Int
         let videoSize: CGSize? = videoWidth != nil && videoHeight != nil
@@ -242,7 +248,9 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
             videoSize: videoSize,
             videoFormat: VideoFormat.from(wire: args["videoFormat"] as? String),
             targetSizeBytes: targetSizeBytes,
-            videoFps: videoFps)
+            videoFps: videoFps,
+            audioBitrate: audioBitrate,
+            audioSampleRate: audioSampleRate)
 
         let count = paths.count
         var videos: [LightCompressor.Video] = []

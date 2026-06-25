@@ -115,6 +115,8 @@ public struct LightCompressor {
             public let videoBitrateInMbps: Int?
             public let targetSizeBytes: Int?
             public let videoFps: Int?
+            public let audioBitrate: Int?
+            public let audioSampleRate: Int?
             public let disableAudio: Bool
             public let keepOriginalResolution: Bool
             public let videoSize: CGSize?
@@ -129,13 +131,17 @@ public struct LightCompressor {
                 videoSize: CGSize? = nil,
                 videoFormat: VideoFormat = .h264,
                 targetSizeBytes: Int? = nil,
-                videoFps: Int? = nil
+                videoFps: Int? = nil,
+                audioBitrate: Int? = nil,
+                audioSampleRate: Int? = nil
             ) {
                 self.quality = quality
                 self.isMinBitrateCheckEnabled = isMinBitrateCheckEnabled
                 self.videoBitrateInMbps = videoBitrateInMbps
                 self.targetSizeBytes = targetSizeBytes
                 self.videoFps = videoFps
+                self.audioBitrate = audioBitrate
+                self.audioSampleRate = audioSampleRate
                 self.disableAudio = disableAudio
                 self.keepOriginalResolution = keepOriginalResolution
                 self.videoSize = videoSize
@@ -531,15 +537,46 @@ public struct LightCompressor {
             let audioTrack = configuration.disableAudio
                 ? nil
                 : videoAsset.tracks(withMediaType: .audio).first
+            // Re-encode the audio to AAC when a bitrate/sample-rate was requested
+            // (8c); otherwise copy the source samples through untouched (nil).
+            let reEncodeAudio = !configuration.disableAudio
+                && (configuration.audioBitrate != nil
+                    || configuration.audioSampleRate != nil)
             var audioWriterInput: AVAssetWriterInput?
             var audioReader: AVAssetReader?
             var audioReaderOutput: AVAssetReaderTrackOutput?
             if let audioTrack {
-                let input = AVAssetWriterInput(mediaType: .audio, outputSettings: nil)
+                var writerSettings: [String: Any]?
+                var readerSettings: [String: Any]?
+                if reEncodeAudio {
+                    // Default channels + sample rate from the source track.
+                    var channels = 2
+                    var srcSampleRate = 44100.0
+                    let descs = audioTrack.formatDescriptions as! [CMAudioFormatDescription]
+                    if let desc = descs.first,
+                        let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(
+                            desc)?.pointee {
+                        if asbd.mChannelsPerFrame > 0 { channels = Int(asbd.mChannelsPerFrame) }
+                        if asbd.mSampleRate > 0 { srcSampleRate = asbd.mSampleRate }
+                    }
+                    var aac: [String: Any] = [
+                        AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                        AVNumberOfChannelsKey: channels,
+                        AVSampleRateKey: configuration.audioSampleRate ?? Int(srcSampleRate),
+                    ]
+                    if let bitrate = configuration.audioBitrate {
+                        aac[AVEncoderBitRateKey] = bitrate
+                    }
+                    writerSettings = aac
+                    // The reader must decompress to PCM so the writer can re-encode.
+                    readerSettings = [AVFormatIDKey: Int(kAudioFormatLinearPCM)]
+                }
+                let input = AVAssetWriterInput(mediaType: .audio, outputSettings: writerSettings)
                 input.expectsMediaDataInRealTime = false
                 videoWriter.add(input)
                 audioWriterInput = input
-                audioReaderOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
+                audioReaderOutput = AVAssetReaderTrackOutput(
+                    track: audioTrack, outputSettings: readerSettings)
                 audioReader = try? AVAssetReader(asset: videoAsset)
                 audioReader?.add(audioReaderOutput!)
             }
@@ -598,14 +635,20 @@ public struct LightCompressor {
 
                                     if audioReader.status == .reading, let audioBuffer {
                                         if isFirstBuffer {
-                                            let dict = CMTimeCopyAsDictionary(
-                                                CMTimeMake(value: 1024, timescale: 44100),
-                                                allocator: kCFAllocatorDefault)
-                                            CMSetAttachment(
-                                                audioBuffer as CMAttachmentBearer,
-                                                key: kCMSampleBufferAttachmentKey_TrimDurationAtStart,
-                                                value: dict,
-                                                attachmentMode: kCMAttachmentMode_ShouldNotPropagate)
+                                            // AAC passthrough: trim the encoder
+                                            // priming samples at the start. When
+                                            // re-encoding, the writer's encoder
+                                            // handles priming itself.
+                                            if !reEncodeAudio {
+                                                let dict = CMTimeCopyAsDictionary(
+                                                    CMTimeMake(value: 1024, timescale: 44100),
+                                                    allocator: kCFAllocatorDefault)
+                                                CMSetAttachment(
+                                                    audioBuffer as CMAttachmentBearer,
+                                                    key: kCMSampleBufferAttachmentKey_TrimDurationAtStart,
+                                                    value: dict,
+                                                    attachmentMode: kCMAttachmentMode_ShouldNotPropagate)
+                                            }
                                             isFirstBuffer = false
                                         }
                                         audioWriterInput.append(audioBuffer)

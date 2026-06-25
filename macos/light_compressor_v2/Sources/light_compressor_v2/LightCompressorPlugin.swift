@@ -76,7 +76,9 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                             videoSize: videoWidth == nil || videoHeight == nil ? nil : CGSize(width: videoWidth!, height: videoHeight!),
                             videoFormat: VideoFormat.from(wire: myArgs["videoFormat"] as? String),
                             targetSizeBytes: myArgs["targetSizeBytes"] as? Int,
-                            videoFps: myArgs["videoFps"] as? Int)
+                            videoFps: myArgs["videoFps"] as? Int,
+                            audioBitrate: myArgs["audioBitrate"] as? Int,
+                            audioSampleRate: myArgs["audioSampleRate"] as? Int)
                     )],
                     progressQueue: .main,
                     progressHandler: { _, progress in
@@ -197,6 +199,8 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
         let videoBitrateInMbps = args["videoBitrateInMbps"] as? Int
         let targetSizeBytes    = args["targetSizeBytes"]    as? Int
         let videoFps           = args["videoFps"]           as? Int
+        let audioBitrate       = args["audioBitrate"]       as? Int
+        let audioSampleRate    = args["audioSampleRate"]    as? Int
         let videoHeight        = args["videoHeight"]        as? Int
         let videoWidth         = args["videoWidth"]         as? Int
         let videoSize: CGSize? = videoWidth != nil && videoHeight != nil
@@ -212,7 +216,9 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
             videoSize: videoSize,
             videoFormat: VideoFormat.from(wire: args["videoFormat"] as? String),
             targetSizeBytes: targetSizeBytes,
-            videoFps: videoFps)
+            videoFps: videoFps,
+            audioBitrate: audioBitrate,
+            audioSampleRate: audioSampleRate)
 
         let count = paths.count
         var videos: [LightCompressor.Video] = []
