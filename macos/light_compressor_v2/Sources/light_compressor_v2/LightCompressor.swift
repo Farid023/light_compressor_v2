@@ -30,9 +30,10 @@ public enum CompressionResult {
     /// Compression has started.
     case onStart
     /// Compression succeeded. Contains the video index, output URL, video
-    /// duration in seconds, and the codec actually used (which may differ from
-    /// the requested one if H.265 fell back to H.264).
-    case onSuccess(Int, URL, Double, VideoFormat)
+    /// duration in seconds, the codec actually used (which may differ from the
+    /// requested one if H.265 fell back to H.264), and whether a requested
+    /// target output size was met.
+    case onSuccess(Int, URL, Double, VideoFormat, Bool)
     /// Compression failed. Contains the video index and error.
     case onFailure(Int, CompressionError)
     /// Compression was cancelled by the user.
@@ -112,6 +113,7 @@ public struct LightCompressor {
             public let quality: VideoQuality
             public let isMinBitrateCheckEnabled: Bool
             public let videoBitrateInMbps: Int?
+            public let targetSizeBytes: Int?
             public let disableAudio: Bool
             public let keepOriginalResolution: Bool
             public let videoSize: CGSize?
@@ -124,11 +126,13 @@ public struct LightCompressor {
                 disableAudio: Bool = false,
                 keepOriginalResolution: Bool = false,
                 videoSize: CGSize? = nil,
-                videoFormat: VideoFormat = .h264
+                videoFormat: VideoFormat = .h264,
+                targetSizeBytes: Int? = nil
             ) {
                 self.quality = quality
                 self.isMinBitrateCheckEnabled = isMinBitrateCheckEnabled
                 self.videoBitrateInMbps = videoBitrateInMbps
+                self.targetSizeBytes = targetSizeBytes
                 self.disableAudio = disableAudio
                 self.keepOriginalResolution = keepOriginalResolution
                 self.videoSize = videoSize
@@ -436,10 +440,6 @@ public struct LightCompressor {
                 continue
             }
 
-            let newBitrate = configuration.videoBitrateInMbps == nil
-                ? getBitrate(bitrate: bitrate, quality: configuration.quality)
-                : configuration.videoBitrateInMbps! * 1_000_000
-
             let videoSize = videoTrack.naturalSize
             let size: (width: Int, height: Int) = configuration.videoSize == nil
                 ? generateWidthAndHeight(
@@ -449,6 +449,30 @@ public struct LightCompressor {
                 : (Int(configuration.videoSize!.width), Int(configuration.videoSize!.height))
 
             let durationInSeconds = videoAsset.duration.seconds
+
+            // Choose the target video bitrate. Precedence: an explicit
+            // videoBitrateInMbps wins; else a requested target output size is
+            // solved for (computed after `size` so the floor scales to the
+            // output resolution); else the quality preset is used.
+            var targetSizeMet = true
+            let newBitrate: Int
+            if let mbps = configuration.videoBitrateInMbps {
+                newBitrate = mbps * 1_000_000
+            } else if let targetBytes = configuration.targetSizeBytes {
+                let solved = solveTargetBitrate(
+                    targetSizeBytes: targetBytes,
+                    durationSeconds: durationInSeconds,
+                    sourceBitrate: bitrate,
+                    outputWidth: size.width,
+                    outputHeight: size.height,
+                    disableAudio: configuration.disableAudio,
+                    hasAudio: !videoAsset.tracks(withMediaType: .audio).isEmpty)
+                newBitrate = solved.bitrate
+                targetSizeMet = solved.met
+            } else {
+                newBitrate = getBitrate(bitrate: bitrate, quality: configuration.quality)
+            }
+
             let frameRate         = videoTrack.nominalFrameRate
             let totalFrames       = ceil(durationInSeconds * Double(frameRate))
             let progress          = Progress(totalUnitCount: Int64(totalFrames))
@@ -572,7 +596,7 @@ public struct LightCompressor {
                                         videoWriter.finishWriting {
                                             DispatchQueue.main.async {
                                                 if videoWriter.status == .completed {
-                                                    completion(.onSuccess(index, destination, durationInSeconds, resolvedFormat))
+                                                    completion(.onSuccess(index, destination, durationInSeconds, resolvedFormat, targetSizeMet))
                                                 } else {
                                                     completion(.onFailure(index, CompressionError(
                                                         title: videoWriter.error?.localizedDescription ?? "Video writing failed")))
@@ -586,7 +610,7 @@ public struct LightCompressor {
                             videoWriter.finishWriting {
                                 DispatchQueue.main.async {
                                     if videoWriter.status == .completed {
-                                        completion(.onSuccess(index, destination, durationInSeconds, resolvedFormat))
+                                        completion(.onSuccess(index, destination, durationInSeconds, resolvedFormat, targetSizeMet))
                                     } else {
                                         completion(.onFailure(index, CompressionError(
                                             title: videoWriter.error?.localizedDescription ?? "Video writing failed")))
@@ -611,6 +635,45 @@ public struct LightCompressor {
         case .medium:    return Int(bitrate * 0.3)
         case .low:       return Int(bitrate * 0.2)
         case .very_low:  return Int(bitrate * 0.1)
+        }
+    }
+
+    /// Solves for the video bitrate (bps) that lands the output at/under
+    /// [targetSizeBytes], reserving room for audio (a 128 kbps estimate) + ~3%
+    /// container overhead, then clamps to a resolution-scaled floor (so HD is
+    /// not crushed) capped at the source bitrate (never upscale). `met` is false
+    /// when the floor forced the output above the requested size.
+    private func solveTargetBitrate(
+        targetSizeBytes: Int,
+        durationSeconds: Double,
+        sourceBitrate: Float,
+        outputWidth: Int,
+        outputHeight: Int,
+        disableAudio: Bool,
+        hasAudio: Bool
+    ) -> (bitrate: Int, met: Bool) {
+        let audioBps = (disableAudio || !hasAudio) ? 0.0 : 128_000.0
+        let totalBudgetBits = Double(targetSizeBytes) * 8.0
+        let audioBits = audioBps * durationSeconds
+        let videoBudgetBits = totalBudgetBits * 0.97 - audioBits
+        let solvedBps = durationSeconds > 0 ? videoBudgetBits / durationSeconds : 0.0
+        let source = Double(sourceBitrate)
+        // Floor can't exceed the source (never upscale).
+        let floor = min(Double(Self.floorBitrate(width: outputWidth, height: outputHeight)), source)
+        let met = solvedBps >= floor
+        let clamped = min(max(solvedBps, floor), source)
+        return (Int(clamped), met)
+    }
+
+    /// Resolution-scaled bitrate floor (bps), mirroring the Android engine so
+    /// the two platforms agree on how aggressively a target size may compress.
+    private static func floorBitrate(width: Int, height: Int) -> Int {
+        let pixels = width * height
+        switch pixels {
+        case let p where p >= 1920 * 1080: return 12_000_000
+        case let p where p >= 1280 * 720:  return 6_000_000
+        case let p where p >= 854 * 480:   return 3_000_000
+        default:                           return Int(MIN_BITRATE)
         }
     }
 

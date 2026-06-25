@@ -74,7 +74,8 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                             disableAudio: disableAudio,
                             keepOriginalResolution: keepOriginalResolution,
                             videoSize: videoWidth == nil || videoHeight == nil ? nil : CGSize(width: videoWidth!, height: videoHeight!),
-                            videoFormat: VideoFormat.from(wire: myArgs["videoFormat"] as? String))
+                            videoFormat: VideoFormat.from(wire: myArgs["videoFormat"] as? String),
+                            targetSizeBytes: myArgs["targetSizeBytes"] as? Int)
                     )],
                     progressQueue: .main,
                     progressHandler: { _, progress in
@@ -90,7 +91,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                     completion: { compressionResult in
                         
                         switch compressionResult {
-                        case .onSuccess(let index, let outputURL, let duration, let usedFormat):
+                        case .onSuccess(let index, let outputURL, let duration, let usedFormat, let targetSizeMet):
                             if(saveInGallery) {
                                 DispatchQueue.main.async {
                                     PHPhotoLibrary.shared().performChanges({
@@ -109,6 +110,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                                 let originalSize: Int
                                 let compressedSize: Int
                                 let usedFormat: String
+                                let targetSizeMet: Bool
                             }
                             let response = SuccessResponse(
                                 onSuccess: outputURL.path,
@@ -116,7 +118,8 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                                 duration: duration,
                                 originalSize: originalSize,
                                 compressedSize: compressedSize,
-                                usedFormat: usedFormat.wireValue
+                                usedFormat: usedFormat.wireValue,
+                                targetSizeMet: targetSizeMet
                             )
                             replyOnce(response.toJson)
                             
@@ -191,6 +194,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
         }
 
         let videoBitrateInMbps = args["videoBitrateInMbps"] as? Int
+        let targetSizeBytes    = args["targetSizeBytes"]    as? Int
         let videoHeight        = args["videoHeight"]        as? Int
         let videoWidth         = args["videoWidth"]         as? Int
         let videoSize: CGSize? = videoWidth != nil && videoHeight != nil
@@ -204,7 +208,8 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
             disableAudio: disableAudio,
             keepOriginalResolution: keepOriginalResolution,
             videoSize: videoSize,
-            videoFormat: VideoFormat.from(wire: args["videoFormat"] as? String))
+            videoFormat: VideoFormat.from(wire: args["videoFormat"] as? String),
+            targetSizeBytes: targetSizeBytes)
 
         let count = paths.count
         var videos: [LightCompressor.Video] = []
@@ -267,7 +272,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                 case .onStart:
                     break
 
-                case .onSuccess(let index, let outputURL, let duration, let usedFormat):
+                case .onSuccess(let index, let outputURL, let duration, let usedFormat, let targetSizeMet):
                     if saveInGallery {
                         DispatchQueue.main.async {
                             PHPhotoLibrary.shared().performChanges {
@@ -285,6 +290,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                         "compressedSize": compressedSize,
                         "duration": duration,
                         "usedFormat": usedFormat.wireValue,
+                        "targetSizeMet": targetSizeMet,
                     ])
 
                 case .onFailure(let index, let error):
