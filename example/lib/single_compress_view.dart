@@ -38,11 +38,13 @@ class _SingleCompressViewState extends State<SingleCompressView>
   VideoFormat _videoFormat = VideoFormat.h264;
   final TextEditingController _targetSizeController = TextEditingController();
   final TextEditingController _fpsController = TextEditingController();
+  final TextEditingController _audioKbpsController = TextEditingController();
 
   @override
   void dispose() {
     _targetSizeController.dispose();
     _fpsController.dispose();
+    _audioKbpsController.dispose();
     super.dispose();
   }
 
@@ -53,6 +55,7 @@ class _SingleCompressViewState extends State<SingleCompressView>
 
     _targetSizeController.clear();
     _fpsController.clear();
+    _audioKbpsController.clear();
     setState(() {
       _stage = _Stage.ready;
       _sourcePath = path;
@@ -133,6 +136,10 @@ class _SingleCompressViewState extends State<SingleCompressView>
         (parsedTarget != null && parsedTarget > 0) ? parsedTarget : null;
     final parsedFps = int.tryParse(_fpsController.text.trim());
     final videoFps = (parsedFps != null && parsedFps > 0) ? parsedFps : null;
+    final parsedAudioKbps = int.tryParse(_audioKbpsController.text.trim());
+    final audio = (parsedAudioKbps != null && parsedAudioKbps > 0)
+        ? AudioConfig(bitrate: parsedAudioKbps * 1000)
+        : null;
     try {
       final result = await widget.compressor.compressVideo(
         path: path,
@@ -147,6 +154,7 @@ class _SingleCompressViewState extends State<SingleCompressView>
         ios: IOSConfig(saveInGallery: false),
         videoFormat: _videoFormat,
         background: _runInBackground ? const BackgroundConfig() : null,
+        audio: audio,
       );
       if (!mounted) return;
       setState(() {
@@ -240,6 +248,20 @@ class _SingleCompressViewState extends State<SingleCompressView>
               labelText: 'Output FPS — optional',
               helperText:
                   'Downsample to about this rate; blank keeps the source',
+              isDense: true,
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: TextField(
+            controller: _audioKbpsController,
+            enabled: _stage != _Stage.compressing,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Audio bitrate (kbps) — optional',
+              helperText:
+                  'Re-encode AAC at this bitrate; blank copies the source',
               isDense: true,
             ),
           ),
