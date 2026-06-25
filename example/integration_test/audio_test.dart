@@ -42,7 +42,8 @@ void main() {
       );
 
       expect(result, isA<OnSuccess>());
-      await expectReadableVideo(compressor, (result as OnSuccess).destinationPath);
+      await expectReadableVideo(
+          compressor, (result as OnSuccess).destinationPath);
     });
   });
 }
