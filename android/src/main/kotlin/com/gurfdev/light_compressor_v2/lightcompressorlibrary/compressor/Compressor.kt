@@ -219,16 +219,45 @@ object Compressor {
         if (configuration.isMinBitrateCheckEnabled && bitrate > 0 && bitrate <= MIN_BITRATE)
             return@withContext Result(index, success = false, failureMessage = INVALID_BITRATE)
 
-        //Handle new bitrate value
-        val newBitrate: Int =
-            if (configuration.videoBitrateInMbps == null) getBitrate(actualBitrate, configuration.quality)
-            else configuration.videoBitrateInMbps!! * 1000000
-
-        //Handle new width and height values
+        //Handle new width and height values. Computed before the bitrate so the
+        //target-size solver can scale its floor to the OUTPUT resolution.
         val resizer = configuration.resizer
         val target = resizer?.resize(width, height) ?: Pair(width, height)
         var newWidth = roundDimension(target.first)
         var newHeight = roundDimension(target.second)
+
+        // Handle new bitrate value. Precedence: an explicit videoBitrateInMbps
+        // wins; else a requested target output size is solved for; else the
+        // quality preset is used.
+        var targetSizeMet = true
+        val newBitrate: Int = when {
+            configuration.videoBitrateInMbps != null ->
+                configuration.videoBitrateInMbps!! * 1000000
+
+            configuration.targetSizeBytes != null -> {
+                val durationSec = duration / 1000000.0
+                // Reserve bits for the (passed-through) audio track and ~3%
+                // container overhead, then solve for the video bitrate.
+                val audioBps =
+                    if (configuration.disableAudio) 0 else findAudioBitrate(extractor)
+                val totalBudgetBits = configuration.targetSizeBytes!! * 8.0
+                val audioBits = audioBps.toDouble() * durationSec
+                val videoBudgetBits = totalBudgetBits * 0.97 - audioBits
+                val solvedBps =
+                    if (durationSec > 0) videoBudgetBits / durationSec else 0.0
+                // Floor scaled to the output resolution (don't crush HD), capped
+                // at the source bitrate (never upscale). targetSizeMet is false
+                // when the floor forces the output above the solved budget.
+                val floor = minOf(
+                    estimateBitrateFromResolution(newWidth.toDouble(), newHeight.toDouble()),
+                    actualBitrate,
+                ).toDouble()
+                targetSizeMet = solvedBps >= floor
+                solvedBps.coerceIn(floor, actualBitrate.toDouble()).toInt()
+            }
+
+            else -> getBitrate(actualBitrate, configuration.quality)
+        }
 
         //Handle rotation values and swapping height and width if needed
         rotation = when (rotation) {
@@ -263,7 +292,8 @@ object Compressor {
             listener,
             duration,
             rotation,
-            outputMime
+            outputMime,
+            targetSizeMet,
         )
 
         } finally {
@@ -287,7 +317,8 @@ object Compressor {
         compressionProgressListener: CompressionProgressListener,
         duration: Long,
         rotation: Int,
-        outputMime: String
+        outputMime: String,
+        targetSizeMet: Boolean,
     ): Result {
 
         if (newWidth != 0 && newHeight != 0) {
@@ -627,7 +658,8 @@ object Compressor {
                 size = cacheFile.length(),
                 path = cacheFile.path,
                 duration = reportedDurationUs.toDouble() / 1000000.0,
-                videoFormat = if (outputMime == HEVC_MIME) "h265" else "h264"
+                videoFormat = if (outputMime == HEVC_MIME) "h265" else "h264",
+                targetSizeMet = targetSizeMet,
             )
         }
 
@@ -702,6 +734,22 @@ object Compressor {
      * quality-based fraction in [CompressorUtils.getBitrate] yields a reasonable
      * output instead of the absurdly small result MIN_BITRATE would produce.
      */
+    /**
+     * Source audio-track bitrate (bps) for the target-size solver's audio
+     * reserve, or a 128 kbps AAC fallback when the track does not report one.
+     */
+    private fun findAudioBitrate(extractor: MediaExtractor): Int {
+        val audioIndex = findTrack(extractor, isVideo = false)
+        if (audioIndex >= 0) {
+            val format = extractor.getTrackFormat(audioIndex)
+            if (format.containsKey(MediaFormat.KEY_BIT_RATE)) {
+                val br = format.getInteger(MediaFormat.KEY_BIT_RATE)
+                if (br > 0) return br
+            }
+        }
+        return 128_000
+    }
+
     private fun estimateBitrateFromResolution(width: Double, height: Double): Int {
         val pixels = width * height
         return when {

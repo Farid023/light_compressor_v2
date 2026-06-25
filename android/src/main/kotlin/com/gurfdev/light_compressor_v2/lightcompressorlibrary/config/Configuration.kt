@@ -19,6 +19,10 @@ data class Configuration(
     val resizer: VideoResizer? = VideoResizer.auto,
     var videoNames: List<String>,
     var videoFormat: VideoFormat = VideoFormat.H264,
+    // Target output size in bytes (Phase 8a). When set, the compressor solves
+    // for the video bitrate that lands the output at/under it. Appended last so
+    // the deprecated positional secondary constructors below stay valid.
+    var targetSizeBytes: Long? = null,
 ) {
     @Deprecated("Use VideoResizer to override the output video dimensions.", ReplaceWith("Configuration(quality, isMinBitrateCheckEnabled, videoBitrateInMbps, disableAudio, resizer = if (keepOriginalResolution) null else VideoResizer.auto, videoNames)"))
     constructor(

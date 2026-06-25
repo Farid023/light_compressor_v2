@@ -112,6 +112,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         val disableAudio: Boolean           = call.argument("disableAudio")!!
         val keepOriginalResolution: Boolean = call.argument("keepOriginalResolution")!!
         val videoBitrateInMbps: Int?        = call.argument("videoBitrateInMbps")
+        val targetSizeBytes: Long?          = call.argument<Number>("targetSizeBytes")?.toLong()
         val videoHeight: Int?               = call.argument("videoHeight")
         val videoWidth: Int?                = call.argument("videoWidth")
         val saveAt: String                  = call.argument("saveAt")!!
@@ -154,20 +155,20 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 requestPermissionAndCompress33(
                     path, result, quality, isMinBitrateCheckEnabled,
-                    videoBitrateInMbps, disableAudio, resizer,
+                    videoBitrateInMbps, targetSizeBytes, disableAudio, resizer,
                     storageConfiguration, videoName, background, videoFormat
                 )
             } else {
                 requestPermissionAndCompressLegacy(
                     path, result, quality, isMinBitrateCheckEnabled,
-                    videoBitrateInMbps, disableAudio, resizer,
+                    videoBitrateInMbps, targetSizeBytes, disableAudio, resizer,
                     storageConfiguration, videoName, background, videoFormat
                 )
             }
         } else {
             compressVideo(
                 path, result, quality, isMinBitrateCheckEnabled,
-                videoBitrateInMbps, disableAudio, resizer,
+                videoBitrateInMbps, targetSizeBytes, disableAudio, resizer,
                 storageConfiguration, videoName, background, videoFormat
             )
         }
@@ -181,6 +182,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         quality: VideoQuality,
         isMinBitrateCheckEnabled: Boolean,
         videoBitrateInMbps: Int?,
+        targetSizeBytes: Long?,
         disableAudio: Boolean,
         resizer: VideoResizer?,
         storageConfiguration: StorageConfiguration,
@@ -213,6 +215,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                 quality = quality,
                 isMinBitrateCheckEnabled = isMinBitrateCheckEnabled,
                 videoBitrateInMbps = videoBitrateInMbps,
+                targetSizeBytes = targetSizeBytes,
                 disableAudio = disableAudio,
                 resizer = resizer,
                 videoNames = listOf(videoName),
@@ -232,7 +235,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                     }
                 }
 
-                override fun onSuccess(index: Int, size: Long, path: String?, duration: Double, videoFormat: String) {
+                override fun onSuccess(index: Int, size: Long, path: String?, duration: Double, videoFormat: String, targetSizeMet: Boolean) {
                     val originalSize = try {
                         File(sourcePath).length()
                     } catch (e: Exception) {
@@ -244,7 +247,8 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                         "duration" to duration,
                         "originalSize" to originalSize,
                         "compressedSize" to size,
-                        "usedFormat" to videoFormat
+                        "usedFormat" to videoFormat,
+                        "targetSizeMet" to targetSizeMet
                     ))
                 }
 
@@ -278,6 +282,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         val disableAudio: Boolean = call.argument("disableAudio") ?: false
         val keepOriginalResolution: Boolean = call.argument("keepOriginalResolution") ?: false
         val videoBitrateInMbps: Int? = call.argument("videoBitrateInMbps")
+        val targetSizeBytes: Long? = call.argument<Number>("targetSizeBytes")?.toLong()
         val videoHeight: Int? = call.argument("videoHeight")
         val videoWidth: Int? = call.argument("videoWidth")
         val saveAt: String = call.argument("saveAt") ?: "Movies"
@@ -352,6 +357,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                 quality = quality,
                 isMinBitrateCheckEnabled = isMinBitrateCheckEnabled,
                 videoBitrateInMbps = videoBitrateInMbps,
+                targetSizeBytes = targetSizeBytes,
                 disableAudio = disableAudio,
                 resizer = resizer,
                 videoNames = videoNames,
@@ -381,7 +387,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                     }
                 }
 
-                override fun onSuccess(index: Int, size: Long, path: String?, duration: Double, videoFormat: String) {
+                override fun onSuccess(index: Int, size: Long, path: String?, duration: Double, videoFormat: String, targetSizeMet: Boolean) {
                     val originalSize = try {
                         File(paths[index]).length()
                     } catch (e: Exception) {
@@ -392,7 +398,8 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                         "originalSize" to originalSize,
                         "compressedSize" to size,
                         "duration" to duration,
-                        "usedFormat" to videoFormat
+                        "usedFormat" to videoFormat,
+                        "targetSizeMet" to targetSizeMet
                     ))
                 }
 
@@ -416,6 +423,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
     private fun requestPermissionAndCompress33(
         path: String, result: Result, quality: VideoQuality,
         isMinBitrateCheckEnabled: Boolean, videoBitrateInMbps: Int?,
+        targetSizeBytes: Long?,
         disableAudio: Boolean, resizer: VideoResizer?,
         storageConfiguration: StorageConfiguration, videoName: String,
         background: BackgroundParams?, videoFormat: VideoFormat
@@ -437,13 +445,14 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         }
         compressVideo(
             path, result, quality, isMinBitrateCheckEnabled,
-            videoBitrateInMbps, disableAudio, resizer, storageConfiguration, videoName, background, videoFormat
+            videoBitrateInMbps, targetSizeBytes, disableAudio, resizer, storageConfiguration, videoName, background, videoFormat
         )
     }
 
     private fun requestPermissionAndCompressLegacy(
         path: String, result: Result, quality: VideoQuality,
         isMinBitrateCheckEnabled: Boolean, videoBitrateInMbps: Int?,
+        targetSizeBytes: Long?,
         disableAudio: Boolean, resizer: VideoResizer?,
         storageConfiguration: StorageConfiguration, videoName: String,
         background: BackgroundParams?, videoFormat: VideoFormat
@@ -457,7 +466,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         }
         compressVideo(
             path, result, quality, isMinBitrateCheckEnabled,
-            videoBitrateInMbps, disableAudio, resizer, storageConfiguration, videoName, background, videoFormat
+            videoBitrateInMbps, targetSizeBytes, disableAudio, resizer, storageConfiguration, videoName, background, videoFormat
         )
     }
 

@@ -16,4 +16,8 @@ data class Result(
     /** Codec actually used for the output: "h264" or "h265". H.265 falls back to
      *  H.264 when the device has no hardware HEVC encoder. */
     val videoFormat: String = "h264",
+    /** Whether a requested target output size was achievable: true when no
+     *  target was set or the solved bitrate met it; false when the resolution
+     *  floor forced a larger output. */
+    val targetSizeMet: Boolean = true,
 )

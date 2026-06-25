@@ -191,7 +191,7 @@ object VideoCompressor : CoroutineScope by MainScope() {
                                 shouldSave = true
                             )
 
-                            listener.onSuccess(i, result.size, savedFile?.path, result.duration, result.videoFormat)
+                            listener.onSuccess(i, result.size, savedFile?.path, result.duration, result.videoFormat, result.targetSizeMet)
                         } else {
                             try {
                                 if (finalDesFile?.exists() == true) finalDesFile.delete()
