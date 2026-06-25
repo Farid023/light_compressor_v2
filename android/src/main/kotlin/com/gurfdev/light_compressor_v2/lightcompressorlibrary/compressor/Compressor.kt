@@ -279,6 +279,15 @@ object Compressor {
             else
                 MIME_TYPE
 
+        // Phase 8c: re-encode the audio to AAC up front when a bitrate is
+        // requested, capturing the encoder's output format + buffered samples so
+        // the muxer track is described correctly. Null keeps the cheap
+        // passthrough copy.
+        val audioTranscode: AudioTranscodeResult? =
+            if (!configuration.disableAudio && configuration.audioBitrate != null)
+                transcodeAudioToBuffer(context, srcUri, file, configuration.audioBitrate!!)
+            else null
+
         return@withContext start(
             index,
             newWidth,
@@ -293,6 +302,7 @@ object Compressor {
             outputMime,
             targetSizeMet,
             configuration.videoFps,
+            audioTranscode,
         )
 
         } finally {
@@ -319,6 +329,7 @@ object Compressor {
         outputMime: String,
         targetSizeMet: Boolean,
         videoFps: Int?,
+        audioTranscode: AudioTranscodeResult?,
     ): Result {
 
         if (newWidth != 0 && newHeight != 0) {
@@ -515,9 +526,14 @@ object Compressor {
                                     if (!muxerStarted) {
                                         videoTrackIndex =
                                             mediaMuxer.addTrack(encoder.outputFormat)
-                                        if (audioFormat != null) {
+                                        // Re-encoded audio (8c) supplies its own
+                                        // output format; otherwise use the source
+                                        // format for the passthrough copy.
+                                        val audioMuxFormat =
+                                            audioTranscode?.format ?: audioFormat
+                                        if (audioMuxFormat != null) {
                                             audioMuxerTrackIndex =
-                                                mediaMuxer.addTrack(audioFormat)
+                                                mediaMuxer.addTrack(audioMuxFormat)
                                         }
                                         mediaMuxer.start()
                                         muxerStarted = true
@@ -634,14 +650,24 @@ object Compressor {
                     try { outputSurface?.release() } catch (ignored: Exception) {}
                 }
 
-                if (muxerStarted && audioFormat != null && audioMuxerTrackIndex >= 0) {
-                    copyAudioSamples(
-                        mediaMuxer,
-                        audioMuxerTrackIndex,
-                        audioExtractorIndex,
-                        extractor,
-                        bufferInfo,
-                    )
+                if (muxerStarted && audioMuxerTrackIndex >= 0) {
+                    if (audioTranscode != null) {
+                        // Phase 8c: write the pre-encoded AAC samples.
+                        writeBufferedAudio(
+                            mediaMuxer,
+                            audioMuxerTrackIndex,
+                            audioTranscode.samples,
+                            bufferInfo,
+                        )
+                    } else if (audioFormat != null) {
+                        copyAudioSamples(
+                            mediaMuxer,
+                            audioMuxerTrackIndex,
+                            audioExtractorIndex,
+                            extractor,
+                            bufferInfo,
+                        )
+                    }
                 }
 
                 extractor.release()
@@ -693,6 +719,205 @@ object Compressor {
             success = false,
             failureMessage = "Something went wrong, please try again"
         )
+    }
+
+    /** One re-encoded AAC access unit, buffered until the muxer is started. */
+    private class EncodedAudioSample(
+        val data: ByteArray,
+        val presentationTimeUs: Long,
+        val flags: Int,
+    )
+
+    /** The captured AAC output format plus all re-encoded samples (Phase 8c). */
+    private class AudioTranscodeResult(
+        val format: MediaFormat,
+        val samples: List<EncodedAudioSample>,
+    )
+
+    /**
+     * Phase 8c: decodes the source audio to PCM and re-encodes it to AAC at
+     * [targetBitrate], keeping the source sample rate (no resampler). Buffers the
+     * encoded samples and captures the encoder's real output format so the caller
+     * can add a correctly-described muxer track before MediaMuxer.start(). Uses
+     * its own MediaExtractor so it does not disturb the video extractor. Returns
+     * null when there is no audio track or transcoding fails (the caller then
+     * falls back to the verbatim passthrough copy).
+     *
+     * The encoded audio is held in memory; this is fine for typical clips but a
+     * very long source means proportionally more memory (see roadmap Phase 11).
+     */
+    private fun transcodeAudioToBuffer(
+        context: Context,
+        srcUri: Uri,
+        file: File,
+        targetBitrate: Int,
+    ): AudioTranscodeResult? {
+        val extractor = MediaExtractor()
+        var fis: FileInputStream? = null
+        var decoder: MediaCodec? = null
+        var encoder: MediaCodec? = null
+        try {
+            try {
+                fis = FileInputStream(file)
+                extractor.setDataSource(fis.fd)
+            } catch (e: Exception) {
+                try { fis?.close() } catch (ignored: Exception) {}
+                fis = null
+                extractor.setDataSource(context, srcUri, null)
+            }
+
+            val audioIndex = findTrack(extractor, isVideo = false)
+            if (audioIndex < 0) return null
+            extractor.selectTrack(audioIndex)
+            val inputFormat = extractor.getTrackFormat(audioIndex)
+            val mime = inputFormat.getString(MediaFormat.KEY_MIME) ?: return null
+            val sampleRate =
+                if (inputFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE))
+                    inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) else 44100
+            val channelCount =
+                if (inputFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT))
+                    inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 2
+
+            decoder = MediaCodec.createDecoderByType(mime)
+            decoder.configure(inputFormat, null, null, 0)
+            decoder.start()
+
+            val outFormat = MediaFormat.createAudioFormat(
+                MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channelCount,
+            )
+            outFormat.setInteger(
+                MediaFormat.KEY_AAC_PROFILE,
+                MediaCodecInfo.CodecProfileLevel.AACObjectLC,
+            )
+            outFormat.setInteger(MediaFormat.KEY_BIT_RATE, targetBitrate)
+            outFormat.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 64 * 1024)
+            encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+            encoder.configure(outFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            encoder.start()
+
+            val samples = ArrayList<EncodedAudioSample>()
+            var encoderFormat: MediaFormat? = null
+            val info = MediaCodec.BufferInfo()
+            val timeoutUs = 10000L
+
+            var extractorDone = false
+            var decoderDone = false
+            var encoderDone = false
+
+            // A decoded PCM buffer is held here until the encoder can accept it,
+            // so we never dequeue a decoder buffer we cannot immediately feed.
+            var pendingIndex = -1
+            var pendingOffset = 0
+            var pendingSize = 0
+            var pendingPts = 0L
+            var pendingEos = false
+
+            while (!encoderDone) {
+                // 1) Feed the extractor into the decoder.
+                if (!extractorDone) {
+                    val inIndex = decoder.dequeueInputBuffer(timeoutUs)
+                    if (inIndex >= 0) {
+                        val buf = decoder.getInputBuffer(inIndex)!!
+                        val size = extractor.readSampleData(buf, 0)
+                        if (size < 0) {
+                            decoder.queueInputBuffer(
+                                inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM,
+                            )
+                            extractorDone = true
+                        } else {
+                            decoder.queueInputBuffer(inIndex, 0, size, extractor.sampleTime, 0)
+                            extractor.advance()
+                        }
+                    }
+                }
+
+                // 2) Pull a decoded PCM buffer (only when not already holding one).
+                if (!decoderDone && pendingIndex < 0) {
+                    val outIndex = decoder.dequeueOutputBuffer(info, timeoutUs)
+                    if (outIndex >= 0) {
+                        pendingIndex = outIndex
+                        pendingOffset = info.offset
+                        pendingSize = info.size
+                        pendingPts = info.presentationTimeUs
+                        pendingEos = (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+                    }
+                }
+
+                // 3) Feed the held PCM into the encoder once it has an input slot.
+                if (pendingIndex >= 0) {
+                    val encIn = encoder.dequeueInputBuffer(timeoutUs)
+                    if (encIn >= 0) {
+                        val encBuf = encoder.getInputBuffer(encIn)!!
+                        encBuf.clear()
+                        if (pendingSize > 0) {
+                            val pcm = decoder.getOutputBuffer(pendingIndex)!!
+                            pcm.position(pendingOffset)
+                            pcm.limit(pendingOffset + pendingSize)
+                            encBuf.put(pcm)
+                        }
+                        encoder.queueInputBuffer(
+                            encIn, 0, pendingSize, pendingPts,
+                            if (pendingEos) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0,
+                        )
+                        decoder.releaseOutputBuffer(pendingIndex, false)
+                        if (pendingEos) decoderDone = true
+                        pendingIndex = -1
+                    }
+                }
+
+                // 4) Drain the encoder, buffering samples + capturing the format.
+                val encOut = encoder.dequeueOutputBuffer(info, timeoutUs)
+                if (encOut == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    encoderFormat = encoder.outputFormat
+                } else if (encOut >= 0) {
+                    val isConfig = (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
+                    if (info.size > 0 && !isConfig) {
+                        val out = encoder.getOutputBuffer(encOut)!!
+                        out.position(info.offset)
+                        out.limit(info.offset + info.size)
+                        val data = ByteArray(info.size)
+                        out.get(data)
+                        samples.add(
+                            EncodedAudioSample(data, info.presentationTimeUs, info.flags),
+                        )
+                    }
+                    encoder.releaseOutputBuffer(encOut, false)
+                    if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                        encoderDone = true
+                    }
+                }
+            }
+
+            return encoderFormat?.let { AudioTranscodeResult(it, samples) }
+        } catch (e: Exception) {
+            printException(e)
+            return null
+        } finally {
+            try { decoder?.stop() } catch (ignored: Exception) {}
+            try { decoder?.release() } catch (ignored: Exception) {}
+            try { encoder?.stop() } catch (ignored: Exception) {}
+            try { encoder?.release() } catch (ignored: Exception) {}
+            try { extractor.release() } catch (ignored: Exception) {}
+            try { fis?.close() } catch (ignored: Exception) {}
+        }
+    }
+
+    /** Writes the [samples] re-encoded by [transcodeAudioToBuffer] into the
+     *  already-added muxer audio [trackIndex]. */
+    private fun writeBufferedAudio(
+        mediaMuxer: MediaMuxer,
+        trackIndex: Int,
+        samples: List<EncodedAudioSample>,
+        bufferInfo: MediaCodec.BufferInfo,
+    ) {
+        for (sample in samples) {
+            val buffer = ByteBuffer.wrap(sample.data)
+            bufferInfo.offset = 0
+            bufferInfo.size = sample.data.size
+            bufferInfo.presentationTimeUs = sample.presentationTimeUs
+            bufferInfo.flags = sample.flags
+            mediaMuxer.writeSampleData(trackIndex, buffer, bufferInfo)
+        }
     }
 
     /**
