@@ -109,6 +109,9 @@ class LightCompressor {
   ///   app is backgrounded or the screen is off. Behaviour and guarantees vary
   ///   per platform; see [BackgroundConfig]. Defaults to `null` (the OS may
   ///   pause/terminate the compression once the app leaves the foreground).
+  /// * [audio] — When provided, re-encodes the audio track as AAC with the
+  ///   given bitrate/sample-rate; see [AudioConfig]. Ignored when [disableAudio]
+  ///   is `true`. Defaults to `null` (the source audio is copied through).
   ///
   /// Returns a [Result] which can be:
   /// * [OnSuccess] containing the output destination file path and statistics.
@@ -130,6 +133,7 @@ class LightCompressor {
     bool isMinBitrateCheckEnabled = true,
     VideoFormat videoFormat = VideoFormat.h264,
     BackgroundConfig? background,
+    AudioConfig? audio,
   }) async {
     final Map<String, dynamic> response = jsonDecode(
       await _channel
@@ -139,6 +143,8 @@ class LightCompressor {
             'isSharedStorage': android.isSharedStorage,
             'saveAt': android.saveAt.name,
             'disableAudio': disableAudio,
+            'audioBitrate': audio?.bitrate,
+            'audioSampleRate': audio?.sampleRate,
             'keepOriginalResolution': video.keepOriginalResolution,
             'isMinBitrateCheckEnabled': isMinBitrateCheckEnabled,
             'videoBitrateInMbps': video.videoBitrateInMbps,
@@ -249,6 +255,7 @@ class LightCompressor {
     bool isMinBitrateCheckEnabled = true,
     VideoFormat videoFormat = VideoFormat.h264,
     BackgroundConfig? background,
+    AudioConfig? audio,
   }) async {
     assert(
       paths.length == videoNames.length,
@@ -284,6 +291,8 @@ class LightCompressor {
               : null,
           'videoFps': videoFps,
           'disableAudio': disableAudio,
+          'audioBitrate': audio?.bitrate,
+          'audioSampleRate': audio?.sampleRate,
           'isMinBitrateCheckEnabled': isMinBitrateCheckEnabled,
           'videoFormat': videoFormat.name,
           'background': background?.toMap(),

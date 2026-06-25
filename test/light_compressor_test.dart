@@ -1072,5 +1072,60 @@ void main() {
       final args = log.last.arguments as Map<dynamic, dynamic>;
       expect(args['videoFps'], 24);
     });
+
+    // --- Phase 8c: audio controls ---
+
+    test('compressVideo forwards audio bitrate and sample rate', () async {
+      mockedResponse = jsonEncode({'onSuccess': '/path/to/output.mp4'});
+
+      await compressor.compressVideo(
+        path: '/path/to/input.mp4',
+        videoQuality: VideoQuality.medium,
+        video: Video(videoName: 'output.mp4'),
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+        audio: const AudioConfig(bitrate: 96000, sampleRate: 44100),
+      );
+
+      final arguments = log.first.arguments as Map<dynamic, dynamic>;
+      expect(arguments['audioBitrate'], 96000);
+      expect(arguments['audioSampleRate'], 44100);
+    });
+
+    test('compressVideo sends null audio fields when not requested', () async {
+      mockedResponse = jsonEncode({'onSuccess': '/path/to/output.mp4'});
+
+      await compressor.compressVideo(
+        path: '/path/to/input.mp4',
+        videoQuality: VideoQuality.medium,
+        video: Video(videoName: 'output.mp4'),
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+      );
+
+      final arguments = log.first.arguments as Map<dynamic, dynamic>;
+      expect(arguments.containsKey('audioBitrate'), isTrue);
+      expect(arguments['audioBitrate'], isNull);
+      expect(arguments['audioSampleRate'], isNull);
+    });
+
+    test('compressVideos forwards audio config', () async {
+      batchResponse = <Map<String, dynamic>>[
+        {'onSuccess': '/out0.mp4'},
+      ];
+
+      await compressor.compressVideos(
+        paths: ['/a.mp4'],
+        videoNames: ['out0.mp4'],
+        videoQuality: VideoQuality.medium,
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+        audio: const AudioConfig(bitrate: 64000),
+      );
+
+      final args = log.last.arguments as Map<dynamic, dynamic>;
+      expect(args['audioBitrate'], 64000);
+      expect(args['audioSampleRate'], isNull);
+    });
   });
 }

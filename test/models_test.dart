@@ -320,4 +320,23 @@ void main() {
       expect(r.quality, 90);
     });
   });
+
+  group('AudioConfig', () {
+    test('defaults to null fields', () {
+      const a = AudioConfig();
+      expect(a.bitrate, isNull);
+      expect(a.sampleRate, isNull);
+    });
+
+    test('stores values', () {
+      const a = AudioConfig(bitrate: 128000, sampleRate: 44100);
+      expect(a.bitrate, 128000);
+      expect(a.sampleRate, 44100);
+    });
+
+    test('asserts positive bitrate and sampleRate', () {
+      expect(() => AudioConfig(bitrate: 0), throwsA(isA<AssertionError>()));
+      expect(() => AudioConfig(sampleRate: 0), throwsA(isA<AssertionError>()));
+    });
+  });
 }
