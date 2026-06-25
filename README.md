@@ -27,7 +27,9 @@ Extreme high bitrates are reduced while maintaining good video quality, resultin
 - **Custom resolution & bitrate** — override width, height, and bitrate when presets aren't enough.
 - **Structured success result** — `OnSuccess` carries `originalSize`, `compressedSize`, `duration`, and `ratio` (percentage reduction).
 - **Media info** — read width, height, duration, bitrate, rotation, frame rate, and MIME type via `getMediaInfo`.
-- **Thumbnail extraction** — grab a JPEG frame at any timecode via `getVideoThumbnail`.
+- **Thumbnail extraction** — grab a JPEG frame at any timecode via `getVideoThumbnail`, or several at once via `getVideoThumbnails`.
+- **Compression estimate** — predict the output size, bitrate and resolution *before* compressing via `getCompressionEstimate` (no transcode).
+- **Running-state query** — check whether a compression is in progress via `isCompressing`.
 - **Progress streams** — real-time percentage for single (`onProgressUpdated`) and per-item + overall for batch (`onBatchUpdate`).
 - **Cancellation** — cancel any in-progress compression with a single call.
 - **Background execution** — keep compressing while the app is backgrounded or the screen is off via `BackgroundConfig` (Android foreground service; macOS App Nap suppression; not supported on iOS).
@@ -257,6 +259,48 @@ final String thumbnailPath = await compressor.getVideoThumbnail(
 );
 ```
 
+### Estimate the result before compressing
+
+Predict the output **without** running a transcode — handy for showing the user
+the expected size up front:
+
+```dart
+final CompressionEstimate estimate = await compressor.getCompressionEstimate(
+  '/path/to/video.mp4',
+  videoQuality: VideoQuality.medium,
+);
+print('~${estimate.estimatedSizeBytes} bytes, '
+    '${estimate.outputWidth}×${estimate.outputHeight}, '
+    '~${estimate.estimatedRatio.toStringAsFixed(0)}% smaller');
+```
+
+The figures are approximate (single-pass), computed from the same bitrate and
+resize math the compressor uses.
+
+### Extract several thumbnails at once
+
+Grab multiple frames in a single native call — more efficient than calling
+`getVideoThumbnail` repeatedly. Paths come back in the same order as the requests:
+
+```dart
+final List<String> thumbnails = await compressor.getVideoThumbnails(
+  '/path/to/video.mp4',
+  const <ThumbnailRequest>[
+    ThumbnailRequest(positionInMs: 0),
+    ThumbnailRequest(positionInMs: 1000, quality: 80),
+    ThumbnailRequest(positionInMs: 2000),
+  ],
+);
+```
+
+### Check whether a compression is running
+
+```dart
+if (await compressor.isCompressing()) {
+  // e.g. disable the "Compress" button
+}
+```
+
 ### Clear cached files
 
 ```dart
@@ -315,6 +359,20 @@ try {
 | `isMinBitrateCheckEnabled` | `bool` | | `true` | Skip compression when source bitrate is below 2 Mbps. |
 | `videoFormat` | `VideoFormat` | | `h264` | Output codec for every video: `h264` or `h265` (HEVC). See [`VideoFormat`](#videoformat). |
 | `background` | `BackgroundConfig?` | | `null` | Keep the whole batch running while backgrounded. See [`BackgroundConfig`](#backgroundconfig). |
+
+### `getCompressionEstimate()` → `Future<CompressionEstimate>`
+
+Predicts the output **without transcoding**. The parameters mirror the ones on `compressVideo` that affect the output size.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|:--------:|---------|-------------|
+| `path` | `String` | ✅ | — | Absolute path to the source video. |
+| `videoQuality` | `VideoQuality` | ✅ | — | Quality preset to estimate for. |
+| `videoFormat` | `VideoFormat` | | `h264` | Output codec. Does **not** change the estimated size — the compressor targets the same bitrate for H.264/H.265. |
+| `keepOriginalResolution` | `bool` | | `false` | Keep source dimensions instead of downscaling. |
+| `videoWidth` / `videoHeight` | `int?` | | `null` | Custom output size (set both together). |
+| `videoBitrateInMbps` | `int?` | | `null` | Custom bitrate in Mbps (overrides the preset). |
+| `disableAudio` | `bool` | | `false` | Exclude the audio track from the estimate. |
 
 ### `Video`
 
@@ -397,6 +455,25 @@ All fields are nullable — a container/device may not expose every value.
 | `frameRate` | `double?` | Frames per second. |
 | `mimeType` | `String?` | Container MIME type. |
 
+### `CompressionEstimate` (from `getCompressionEstimate`)
+
+A pre-flight prediction. Approximate — no transcode is run.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `originalSizeBytes` | `int` | Source file size in bytes. |
+| `estimatedSizeBytes` | `int` | Predicted output size in bytes. |
+| `targetBitrate` | `int` | Target video bitrate (bps) used for the estimate. |
+| `outputWidth` / `outputHeight` | `int` | Predicted output dimensions in pixels. |
+| `estimatedRatio` | `double` | Predicted size reduction (`0`–`100`). |
+
+### `ThumbnailRequest` (for `getVideoThumbnails`)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `positionInMs` | `int` | — | Frame timecode in milliseconds (clamped to the video duration). |
+| `quality` | `int` | `50` | JPEG quality, `0` (smallest) to `100` (best). |
+
 ### Exceptions
 
 All extend `LightCompressorException` (catch the base type to handle any):
@@ -407,7 +484,8 @@ All extend `LightCompressorException` (catch the base type to handle any):
 | `UnsupportedVideoException` | Unsupported format/codec or missing track. |
 | `VideoNotFoundException` | The source video was not found. |
 | `MediaInfoException` | Metadata could not be read (`getMediaInfo`). |
-| `ThumbnailException` | A frame could not be extracted (`getVideoThumbnail`). |
+| `ThumbnailException` | A frame could not be extracted (`getVideoThumbnail` / `getVideoThumbnails`). |
+| `EstimateException` | A compression estimate could not be computed (`getCompressionEstimate`). |
 
 ### Other members
 
@@ -417,6 +495,9 @@ All extend `LightCompressorException` (catch the base type to handle any):
 | `onBatchUpdate` | `Stream<BatchEvent>` | Per-video + overall progress and completion events during `compressVideos`. |
 | `getMediaInfo()` | `Future<MediaInfo>` | Read video metadata. |
 | `getVideoThumbnail()` | `Future<String>` | Extract a JPEG frame; returns its file path. |
+| `getVideoThumbnails()` | `Future<List<String>>` | Extract several frames in one call; returns paths in request order. |
+| `getCompressionEstimate()` | `Future<CompressionEstimate>` | Predict the output size/bitrate/resolution without transcoding. |
+| `isCompressing()` | `Future<bool>` | Whether a compression (single or batch) is currently running. |
 | `clearCache()` | `Future<void>` | Delete temporary `.mp4` files created during compression. |
 | `cancelCompression()` | `Future<void>` | Cancel any running compression. |
 
