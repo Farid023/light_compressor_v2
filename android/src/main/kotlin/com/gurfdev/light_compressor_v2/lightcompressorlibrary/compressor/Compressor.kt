@@ -292,6 +292,7 @@ object Compressor {
             rotation,
             outputMime,
             targetSizeMet,
+            configuration.videoFps,
         )
 
         } finally {
@@ -317,6 +318,7 @@ object Compressor {
         rotation: Int,
         outputMime: String,
         targetSizeMet: Boolean,
+        videoFps: Int?,
     ): Result {
 
         if (newWidth != 0 && newHeight != 0) {
@@ -365,6 +367,18 @@ object Compressor {
                 extractor.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
                 val inputFormat = extractor.getTrackFormat(videoIndex)
 
+                // Frame-rate downsampling (8b): drop frames toward videoFps, but
+                // only when it is below the source rate (never duplicate frames).
+                // frameIntervalUs == 0 disables dropping; nextEmitUs tracks the
+                // timestamp of the next frame to keep.
+                val sourceFps =
+                    if (inputFormat.containsKey(MediaFormat.KEY_FRAME_RATE))
+                        inputFormat.getInteger(MediaFormat.KEY_FRAME_RATE) else 0
+                val frameIntervalUs =
+                    if (videoFps != null && videoFps > 0 && (sourceFps <= 0 || videoFps < sourceFps))
+                        1_000_000L / videoFps else 0L
+                var nextEmitUs = 0L
+
                 // Audio is copied through untouched. Resolve it up front because
                 // every track must be added to MediaMuxer before start().
                 val audioExtractorIndex = findTrack(extractor, isVideo = false)
@@ -382,6 +396,10 @@ object Compressor {
                     outputFormat,
                     newBitrate,
                 )
+                // When downsampling, report the reduced rate on the output format.
+                if (frameIntervalUs > 0L && videoFps != null) {
+                    outputFormat.setInteger(MediaFormat.KEY_FRAME_RATE, videoFps)
+                }
 
                 var decoder: MediaCodec? = null
                 var encoder: MediaCodec? = null
@@ -549,7 +567,16 @@ object Compressor {
 
                                 decoderStatus < 0 -> throw RuntimeException("unexpected result from decoder.dequeueOutputBuffer: $decoderStatus")
                                 else -> {
-                                    val doRender = bufferInfo.size != 0
+                                    // Frame-rate downsampling (8b): keep this frame
+                                    // only once its timestamp reaches the next emit
+                                    // point; otherwise drop it (decode without
+                                    // rendering, so it never reaches the encoder).
+                                    val keep = frameIntervalUs <= 0L ||
+                                        bufferInfo.presentationTimeUs >= nextEmitUs
+                                    val doRender = bufferInfo.size != 0 && keep
+                                    if (doRender && frameIntervalUs > 0L) {
+                                        nextEmitUs += frameIntervalUs
+                                    }
 
                                     decoder.releaseOutputBuffer(decoderStatus, doRender)
                                     if (doRender) {

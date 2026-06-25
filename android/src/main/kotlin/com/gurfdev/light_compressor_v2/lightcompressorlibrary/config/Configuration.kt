@@ -23,6 +23,9 @@ data class Configuration(
     // for the video bitrate that lands the output at/under it. Appended last so
     // the deprecated positional secondary constructors below stay valid.
     var targetSizeBytes: Long? = null,
+    // Target output frame rate (Phase 8b). Downsample-only; null leaves the
+    // source rate unchanged.
+    var videoFps: Int? = null,
 ) {
     @Deprecated("Use VideoResizer to override the output video dimensions.", ReplaceWith("Configuration(quality, isMinBitrateCheckEnabled, videoBitrateInMbps, disableAudio, resizer = if (keepOriginalResolution) null else VideoResizer.auto, videoNames)"))
     constructor(
