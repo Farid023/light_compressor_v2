@@ -25,6 +25,9 @@ Extreme high bitrates are reduced while maintaining good video quality, resultin
 - **Five quality presets** — the plugin calculates the optimal bitrate automatically.
 - **H.264 & H.265 (HEVC)** — pick the output codec via `videoFormat`; H.265 produces smaller files and automatically falls back to H.264 when the device can't encode it. `OnSuccess.usedFormat` reports the codec actually used.
 - **Custom resolution & bitrate** — override width, height, and bitrate when presets aren't enough.
+- **Target file size** — compress toward a maximum output size in megabytes via `targetSizeMb`; the compressor solves for the bitrate and reports whether the target was reachable (`OnSuccess.targetSizeMet`).
+- **Frame-rate control** — downsample the output frame rate via `videoFps` (downsample-only — never duplicates frames).
+- **Audio re-encoding** — re-encode the audio track as AAC with a custom bitrate (and sample rate on iOS/macOS) via `AudioConfig`.
 - **Structured success result** — `OnSuccess` carries `originalSize`, `compressedSize`, `duration`, and `ratio` (percentage reduction).
 - **Media info** — read width, height, duration, bitrate, rotation, frame rate, and MIME type via `getMediaInfo`.
 - **Thumbnail extraction** — grab a JPEG frame at any timecode via `getVideoThumbnail`, or several at once via `getVideoThumbnails`.
@@ -205,6 +208,35 @@ advertised HEVC support). When it isn't available the compressor **silently
 falls back to H.264** rather than failing — always read `OnSuccess.usedFormat`
 to know what you got.
 
+### Target a file size, frame rate, or audio bitrate
+
+Set `targetSizeMb` and/or `videoFps` on `Video` (the same fields are flat
+parameters on `compressVideos`), and pass an `AudioConfig` as `audio:`:
+
+```dart
+final Result result = await compressor.compressVideo(
+  path: sourcePath,
+  videoQuality: VideoQuality.medium,
+  android: AndroidConfig(),
+  ios: IOSConfig(),
+  video: Video(
+    videoName: 'compressed.mp4',
+    targetSizeMb: 10, // aim for ≤ 10 MB (mutually exclusive with videoBitrateInMbps)
+    videoFps: 24,     // downsample 30 → 24 fps (downsample-only)
+  ),
+  audio: const AudioConfig(bitrate: 96000), // re-encode audio to ~96 kbps AAC
+);
+
+if (result is OnSuccess && !result.targetSizeMet) {
+  // The target was below the quality floor for this resolution; the output is
+  // larger than requested. (A future release may auto-drop resolution to fit.)
+}
+```
+
+`targetSizeMb` is single-pass and approximate (typically within ~10–15%).
+`audioSampleRate` is honored on iOS/macOS; **Android re-encodes audio at the
+source sample rate** (no resampler), so only the audio `bitrate` applies there.
+
 ### Listen to progress
 
 Single video — a `Stream<double>` from `0` to `100`:
@@ -342,6 +374,7 @@ try {
 | `disableAudio` | `bool?` | | `false` | Strip the audio track from the output. |
 | `videoFormat` | `VideoFormat` | | `h264` | Output codec: `h264` or `h265` (HEVC). Falls back to H.264 when HEVC isn't supported. See [`VideoFormat`](#videoformat). |
 | `background` | `BackgroundConfig?` | | `null` | Keep running while the app is backgrounded. See [`BackgroundConfig`](#backgroundconfig). |
+| `audio` | `AudioConfig?` | | `null` | Re-encode the audio track as AAC. See [`AudioConfig`](#audioconfig). |
 
 ### `compressVideos()` → `Future<List<Result>>`
 
@@ -355,10 +388,13 @@ try {
 | `keepOriginalResolution` | `bool` | | `false` | Keep source dimensions instead of downscaling. |
 | `videoWidth` / `videoHeight` | `int?` | | `null` | Custom output size (set both together). |
 | `videoBitrateInMbps` | `int?` | | `null` | Custom bitrate in Mbps (overrides the preset). |
+| `targetSizeMb` | `int?` | | `null` | Compress toward this maximum output size in MB. Mutually exclusive with `videoBitrateInMbps`. See [`Video.targetSizeMb`](#video). |
+| `videoFps` | `int?` | | `null` | Downsample the output frame rate (downsample-only). |
 | `disableAudio` | `bool` | | `false` | Strip the audio track from every output. |
 | `isMinBitrateCheckEnabled` | `bool` | | `true` | Skip compression when source bitrate is below 2 Mbps. |
 | `videoFormat` | `VideoFormat` | | `h264` | Output codec for every video: `h264` or `h265` (HEVC). See [`VideoFormat`](#videoformat). |
 | `background` | `BackgroundConfig?` | | `null` | Keep the whole batch running while backgrounded. See [`BackgroundConfig`](#backgroundconfig). |
+| `audio` | `AudioConfig?` | | `null` | Re-encode the audio track as AAC. See [`AudioConfig`](#audioconfig). |
 
 ### `getCompressionEstimate()` → `Future<CompressionEstimate>`
 
@@ -383,6 +419,17 @@ Predicts the output **without transcoding**. The parameters mirror the ones on `
 | `videoBitrateInMbps` | `int?` | | `null` | Custom bitrate in Mbps (overrides the quality preset). |
 | `videoHeight` | `int?` | | `null` | Custom height in pixels. Must be set with `videoWidth`. |
 | `videoWidth` | `int?` | | `null` | Custom width in pixels. Must be set with `videoHeight`. |
+| `targetSizeMb` | `int?` | | `null` | Target maximum output size in MB. The compressor solves for the video bitrate (clamped to a 2 Mbps floor and the source bitrate). Mutually exclusive with `videoBitrateInMbps`; must be `> 0`. Whether it was achievable is reported by [`OnSuccess.targetSizeMet`](#result-types). Single-pass and approximate. |
+| `videoFps` | `int?` | | `null` | Target output frame rate. Downsample-only — a value at or above the source rate leaves it unchanged (frames are never duplicated). Must be `> 0`. |
+
+### `AudioConfig`
+
+Re-encodes the audio track as AAC. Passed as `audio:` to `compressVideo` / `compressVideos`; when omitted the source audio is copied through untouched, and it is ignored entirely when `disableAudio` is `true`.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|:--------:|---------|-------------|
+| `bitrate` | `int?` | | `null` | Target AAC bitrate in **bits per second** (e.g. `128000`). Must be `> 0`. |
+| `sampleRate` | `int?` | | `null` | Target sample rate in Hz. **iOS/macOS only** — on Android the audio is re-encoded at the source sample rate (no resampler). Must be `> 0`. |
 
 ### `AndroidConfig`
 
@@ -418,7 +465,7 @@ Output codec, written into an MP4/QuickTime container.
 
 | Type | Properties | Description |
 |------|-----------|-------------|
-| `OnSuccess` | `destinationPath: String`, `originalSize: int`, `compressedSize: int`, `duration: double`, `ratio: double`, `usedFormat: VideoFormat` | Output path, byte sizes, duration (seconds), percentage size reduction and the codec actually used. |
+| `OnSuccess` | `destinationPath: String`, `originalSize: int`, `compressedSize: int`, `duration: double`, `ratio: double`, `usedFormat: VideoFormat`, `targetSizeMet: bool` | Output path, byte sizes, duration (seconds), percentage size reduction, the codec actually used, and whether a requested `targetSizeMb` was achievable (`true` when no target was set). |
 | `OnFailure` | `message: String`, `failureType: CompressionFailureType` | A failure: a human-readable `message` plus a [`CompressionFailureType`](#compressionfailuretype) category for reacting in code without parsing text. |
 | `OnCancelled` | `isCancelled: bool` | Compression was cancelled via `cancelCompression()`. |
 
