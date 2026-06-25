@@ -37,10 +37,12 @@ class _SingleCompressViewState extends State<SingleCompressView>
   bool _runInBackground = false;
   VideoFormat _videoFormat = VideoFormat.h264;
   final TextEditingController _targetSizeController = TextEditingController();
+  final TextEditingController _fpsController = TextEditingController();
 
   @override
   void dispose() {
     _targetSizeController.dispose();
+    _fpsController.dispose();
     super.dispose();
   }
 
@@ -50,6 +52,7 @@ class _SingleCompressViewState extends State<SingleCompressView>
     if (path == null) return;
 
     _targetSizeController.clear();
+    _fpsController.clear();
     setState(() {
       _stage = _Stage.ready;
       _sourcePath = path;
@@ -128,12 +131,18 @@ class _SingleCompressViewState extends State<SingleCompressView>
     final parsedTarget = int.tryParse(_targetSizeController.text.trim());
     final targetSizeMb =
         (parsedTarget != null && parsedTarget > 0) ? parsedTarget : null;
+    final parsedFps = int.tryParse(_fpsController.text.trim());
+    final videoFps = (parsedFps != null && parsedFps > 0) ? parsedFps : null;
     try {
       final result = await widget.compressor.compressVideo(
         path: path,
         videoQuality: VideoQuality.medium,
         isMinBitrateCheckEnabled: false,
-        video: Video(videoName: videoName, targetSizeMb: targetSizeMb),
+        video: Video(
+          videoName: videoName,
+          targetSizeMb: targetSizeMb,
+          videoFps: videoFps,
+        ),
         android: AndroidConfig(isSharedStorage: true, saveAt: SaveAt.Movies),
         ios: IOSConfig(saveInGallery: false),
         videoFormat: _videoFormat,
@@ -217,6 +226,20 @@ class _SingleCompressViewState extends State<SingleCompressView>
               labelText: 'Max output size (MB) — optional',
               helperText:
                   'Compress to about this size; blank uses medium quality',
+              isDense: true,
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: TextField(
+            controller: _fpsController,
+            enabled: _stage != _Stage.compressing,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Output FPS — optional',
+              helperText:
+                  'Downsample to about this rate; blank keeps the source',
               isDense: true,
             ),
           ),
