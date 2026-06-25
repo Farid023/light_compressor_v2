@@ -99,6 +99,7 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
         let videoHeight        = args["videoHeight"]        as? Int
         let videoWidth         = args["videoWidth"]         as? Int
         let targetSizeBytes    = args["targetSizeBytes"]    as? Int
+        let videoFps           = args["videoFps"]           as? Int
 
         let destinationURL = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("\(videoName).mp4")
@@ -137,7 +138,8 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
                         keepOriginalResolution: keepOriginalResolution,
                         videoSize: videoSize,
                         videoFormat: videoFormat,
-                        targetSizeBytes: targetSizeBytes))
+                        targetSizeBytes: targetSizeBytes,
+                        videoFps: videoFps))
             ],
             progressQueue: .main,
             progressHandler: { [weak self] _, progress in
@@ -224,6 +226,7 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
 
         let videoBitrateInMbps = args["videoBitrateInMbps"] as? Int
         let targetSizeBytes    = args["targetSizeBytes"]    as? Int
+        let videoFps           = args["videoFps"]           as? Int
         let videoHeight        = args["videoHeight"]        as? Int
         let videoWidth         = args["videoWidth"]         as? Int
         let videoSize: CGSize? = videoWidth != nil && videoHeight != nil
@@ -238,7 +241,8 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
             keepOriginalResolution: keepOriginalResolution,
             videoSize: videoSize,
             videoFormat: VideoFormat.from(wire: args["videoFormat"] as? String),
-            targetSizeBytes: targetSizeBytes)
+            targetSizeBytes: targetSizeBytes,
+            videoFps: videoFps)
 
         let count = paths.count
         var videos: [LightCompressor.Video] = []

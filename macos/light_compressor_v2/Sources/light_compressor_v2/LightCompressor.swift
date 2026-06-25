@@ -114,6 +114,7 @@ public struct LightCompressor {
             public let isMinBitrateCheckEnabled: Bool
             public let videoBitrateInMbps: Int?
             public let targetSizeBytes: Int?
+            public let videoFps: Int?
             public let disableAudio: Bool
             public let keepOriginalResolution: Bool
             public let videoSize: CGSize?
@@ -127,12 +128,14 @@ public struct LightCompressor {
                 keepOriginalResolution: Bool = false,
                 videoSize: CGSize? = nil,
                 videoFormat: VideoFormat = .h264,
-                targetSizeBytes: Int? = nil
+                targetSizeBytes: Int? = nil,
+                videoFps: Int? = nil
             ) {
                 self.quality = quality
                 self.isMinBitrateCheckEnabled = isMinBitrateCheckEnabled
                 self.videoBitrateInMbps = videoBitrateInMbps
                 self.targetSizeBytes = targetSizeBytes
+                self.videoFps = videoFps
                 self.disableAudio = disableAudio
                 self.keepOriginalResolution = keepOriginalResolution
                 self.videoSize = videoSize
@@ -475,6 +478,16 @@ public struct LightCompressor {
             let totalFrames       = ceil(durationInSeconds * Double(frameRate))
             let progress          = Progress(totalUnitCount: Int64(totalFrames))
 
+            // Frame-rate downsampling (8b): drop frames toward videoFps when it
+            // is below the source rate (never duplicate). Disabled otherwise.
+            let sourceFps = Double(frameRate)
+            let frameDropEnabled = configuration.videoFps != nil
+                && configuration.videoFps! > 0
+                && (sourceFps <= 0 || Double(configuration.videoFps!) < sourceFps)
+            let frameIntervalSeconds =
+                frameDropEnabled ? 1.0 / Double(configuration.videoFps!) : 0.0
+            var nextEmitSeconds = 0.0
+
             // Resolve the output codec: use H.265 only when requested AND the
             // device supports HEVC encoding; otherwise fall back to H.264.
             let resolvedFormat: VideoFormat =
@@ -487,7 +500,8 @@ public struct LightCompressor {
                     bitrate: newBitrate,
                     width: size.width,
                     height: size.height,
-                    format: resolvedFormat))
+                    format: resolvedFormat,
+                    fps: frameDropEnabled ? configuration.videoFps : nil))
             videoWriterInput.expectsMediaDataInRealTime = true
             videoWriterInput.transform = videoTrack.preferredTransform
 
@@ -559,7 +573,14 @@ public struct LightCompressor {
                     let sampleBuffer = videoReaderOutput.copyNextSampleBuffer()
 
                     if videoReader.status == .reading, let sampleBuffer {
-                        videoWriterInput.append(sampleBuffer)
+                        // Frame-rate downsampling (8b): append the frame only once
+                        // its timestamp reaches the next emit point; otherwise drop
+                        // it (don't append) so it never reaches the encoder.
+                        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
+                        if !frameDropEnabled || !pts.isFinite || pts >= nextEmitSeconds {
+                            if frameDropEnabled { nextEmitSeconds += frameIntervalSeconds }
+                            videoWriterInput.append(sampleBuffer)
+                        }
                     } else {
                         videoWriterInput.markAsFinished()
 
@@ -704,10 +725,15 @@ public struct LightCompressor {
         AVAssetExportSession.allExportPresets().contains(AVAssetExportPresetHEVCHighestQuality)
     }
 
-    private func getVideoWriterSettings(bitrate: Int, width: Int, height: Int, format: VideoFormat) -> [String: AnyObject] {
-        let compressionSettings: [String: AnyObject] = [
+    private func getVideoWriterSettings(bitrate: Int, width: Int, height: Int, format: VideoFormat, fps: Int?) -> [String: AnyObject] {
+        var compressionSettings: [String: AnyObject] = [
             AVVideoAverageBitRateKey: bitrate as AnyObject
         ]
+        if let fps, fps > 0 {
+            // Report the reduced rate so the container/encoder advertise it.
+            compressionSettings[AVVideoExpectedSourceFrameRateKey] = fps as AnyObject
+            compressionSettings[AVVideoAverageNonDroppableFrameRateKey] = fps as AnyObject
+        }
         let codec: AVVideoCodecType = (format == .h265) ? .hevc : .h264
         return [
             AVVideoCodecKey:                  codec as AnyObject,

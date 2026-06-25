@@ -75,7 +75,8 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                             keepOriginalResolution: keepOriginalResolution,
                             videoSize: videoWidth == nil || videoHeight == nil ? nil : CGSize(width: videoWidth!, height: videoHeight!),
                             videoFormat: VideoFormat.from(wire: myArgs["videoFormat"] as? String),
-                            targetSizeBytes: myArgs["targetSizeBytes"] as? Int)
+                            targetSizeBytes: myArgs["targetSizeBytes"] as? Int,
+                            videoFps: myArgs["videoFps"] as? Int)
                     )],
                     progressQueue: .main,
                     progressHandler: { _, progress in
@@ -195,6 +196,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
 
         let videoBitrateInMbps = args["videoBitrateInMbps"] as? Int
         let targetSizeBytes    = args["targetSizeBytes"]    as? Int
+        let videoFps           = args["videoFps"]           as? Int
         let videoHeight        = args["videoHeight"]        as? Int
         let videoWidth         = args["videoWidth"]         as? Int
         let videoSize: CGSize? = videoWidth != nil && videoHeight != nil
@@ -209,7 +211,8 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
             keepOriginalResolution: keepOriginalResolution,
             videoSize: videoSize,
             videoFormat: VideoFormat.from(wire: args["videoFormat"] as? String),
-            targetSizeBytes: targetSizeBytes)
+            targetSizeBytes: targetSizeBytes,
+            videoFps: videoFps)
 
         let count = paths.count
         var videos: [LightCompressor.Video] = []
