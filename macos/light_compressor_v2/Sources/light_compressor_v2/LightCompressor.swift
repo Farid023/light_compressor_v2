@@ -500,8 +500,7 @@ public struct LightCompressor {
                     bitrate: newBitrate,
                     width: size.width,
                     height: size.height,
-                    format: resolvedFormat,
-                    fps: frameDropEnabled ? configuration.videoFps : nil))
+                    format: resolvedFormat))
             videoWriterInput.expectsMediaDataInRealTime = true
             videoWriterInput.transform = videoTrack.preferredTransform
 
@@ -725,15 +724,15 @@ public struct LightCompressor {
         AVAssetExportSession.allExportPresets().contains(AVAssetExportPresetHEVCHighestQuality)
     }
 
-    private func getVideoWriterSettings(bitrate: Int, width: Int, height: Int, format: VideoFormat, fps: Int?) -> [String: AnyObject] {
-        var compressionSettings: [String: AnyObject] = [
+    private func getVideoWriterSettings(bitrate: Int, width: Int, height: Int, format: VideoFormat) -> [String: AnyObject] {
+        // NOTE: the frame rate is reduced by actually dropping source frames in
+        // the writer loop (see frameDropEnabled). We deliberately do NOT set
+        // AVVideoExpectedSourceFrameRateKey / AVVideoAverageNonDroppableFrameRateKey
+        // here — they are only encoder hints, and the iOS simulator's software
+        // encoder stalls when they are present, hanging the compression.
+        let compressionSettings: [String: AnyObject] = [
             AVVideoAverageBitRateKey: bitrate as AnyObject
         ]
-        if let fps, fps > 0 {
-            // Report the reduced rate so the container/encoder advertise it.
-            compressionSettings[AVVideoExpectedSourceFrameRateKey] = fps as AnyObject
-            compressionSettings[AVVideoAverageNonDroppableFrameRateKey] = fps as AnyObject
-        }
         let codec: AVVideoCodecType = (format == .h265) ? .hevc : .h264
         return [
             AVVideoCodecKey:                  codec as AnyObject,
