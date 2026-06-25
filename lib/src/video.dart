@@ -9,7 +9,15 @@ class Video {
     this.videoBitrateInMbps,
     this.videoHeight,
     this.videoWidth,
-  });
+    this.targetSizeMb,
+  }) : assert(
+         targetSizeMb == null || videoBitrateInMbps == null,
+         'targetSizeMb and videoBitrateInMbps are mutually exclusive',
+       ),
+       assert(
+         targetSizeMb == null || targetSizeMb > 0,
+         'targetSizeMb must be greater than 0',
+       );
 
   /// The name of the output video file (e.g., `compressed_video.mp4`).
   ///
@@ -36,4 +44,18 @@ class Video {
   ///
   /// If specified, you must also provide [videoHeight].
   final int? videoWidth;
+
+  /// A target output file size in **megabytes** (decimal, 1 MB = 1,000,000
+  /// bytes).
+  ///
+  /// When set, the compressor solves for the video bitrate that lands the
+  /// output at or below this size (reserving room for audio + container
+  /// overhead), instead of using the `videoQuality` preset. It is mutually
+  /// exclusive with [videoBitrateInMbps] and must be greater than 0.
+  ///
+  /// The size is approximate (single-pass VBR): the result is usually within
+  /// ~10–15% of the target. A target that is physically unreachable at the
+  /// output resolution is honoured as closely as the bitrate floor allows, and
+  /// reported via `OnSuccess.targetSizeMet`.
+  final int? targetSizeMb;
 }

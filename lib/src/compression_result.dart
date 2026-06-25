@@ -13,6 +13,7 @@ class OnSuccess implements Result {
     required this.duration,
     required this.ratio,
     this.usedFormat = VideoFormat.h264,
+    this.targetSizeMet = true,
   });
 
   /// The absolute path to the successfully compressed video file.
@@ -37,6 +38,15 @@ class OnSuccess implements Result {
   /// falls back to [VideoFormat.h264] and this field reflects that real
   /// outcome. Defaults to [VideoFormat.h264].
   final VideoFormat usedFormat;
+
+  /// Whether a requested target file size (`Video.targetSizeMb` /
+  /// `compressVideos(targetSizeMb:)`) was achievable.
+  ///
+  /// `true` when no target was requested, or when the output landed at or below
+  /// the target. `false` when the target was physically unreachable at the
+  /// output resolution and the compressor fell back to its bitrate floor — the
+  /// output is then larger than requested. Defaults to `true`.
+  final bool targetSizeMet;
 }
 
 /// Category of a compression failure. Mirrors the typed exceptions thrown by the

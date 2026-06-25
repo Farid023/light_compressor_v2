@@ -142,6 +142,9 @@ class LightCompressor {
             'keepOriginalResolution': video.keepOriginalResolution,
             'isMinBitrateCheckEnabled': isMinBitrateCheckEnabled,
             'videoBitrateInMbps': video.videoBitrateInMbps,
+            'targetSizeBytes': video.targetSizeMb != null
+                ? video.targetSizeMb! * 1000 * 1000
+                : null,
             'videoHeight': video.videoHeight,
             'videoWidth': video.videoWidth,
             'videoName': video.videoName,
@@ -186,6 +189,7 @@ class LightCompressor {
         duration: duration,
         ratio: ratio,
         usedFormat: _videoFormatFromWire(response['usedFormat'] as String?),
+        targetSizeMet: (response['targetSizeMet'] as bool?) ?? true,
       );
     } else if (response['onFailure'] != null) {
       final String failureMessage = response['onFailure'] as String;
@@ -238,6 +242,7 @@ class LightCompressor {
     int? videoWidth,
     int? videoHeight,
     int? videoBitrateInMbps,
+    int? targetSizeMb,
     bool disableAudio = false,
     bool isMinBitrateCheckEnabled = true,
     VideoFormat videoFormat = VideoFormat.h264,
@@ -246,6 +251,14 @@ class LightCompressor {
     assert(
       paths.length == videoNames.length,
       'paths and videoNames must have the same length',
+    );
+    assert(
+      targetSizeMb == null || videoBitrateInMbps == null,
+      'targetSizeMb and videoBitrateInMbps are mutually exclusive',
+    );
+    assert(
+      targetSizeMb == null || targetSizeMb > 0,
+      'targetSizeMb must be greater than 0',
     );
     if (paths.isEmpty) {
       return <Result>[];
@@ -263,6 +276,9 @@ class LightCompressor {
           'videoWidth': videoWidth,
           'videoHeight': videoHeight,
           'videoBitrateInMbps': videoBitrateInMbps,
+          'targetSizeBytes': targetSizeMb != null
+              ? targetSizeMb * 1000 * 1000
+              : null,
           'disableAudio': disableAudio,
           'isMinBitrateCheckEnabled': isMinBitrateCheckEnabled,
           'videoFormat': videoFormat.name,
@@ -299,6 +315,7 @@ class LightCompressor {
         duration: duration,
         ratio: ratio,
         usedFormat: _videoFormatFromWire(map['usedFormat'] as String?),
+        targetSizeMet: (map['targetSizeMet'] as bool?) ?? true,
       );
     } else if (map['onFailure'] != null) {
       return OnFailure(

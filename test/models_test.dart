@@ -55,6 +55,32 @@ void main() {
       expect(video.videoHeight, 720);
       expect(video.videoWidth, 1280);
     });
+
+    test('targetSizeMb defaults to null and can be set', () {
+      expect(Video(videoName: 'test.mp4').targetSizeMb, isNull);
+      expect(Video(videoName: 'test.mp4', targetSizeMb: 10).targetSizeMb, 10);
+    });
+
+    test(
+      'asserts targetSizeMb and videoBitrateInMbps are mutually exclusive',
+      () {
+        expect(
+          () => Video(
+            videoName: 't.mp4',
+            targetSizeMb: 10,
+            videoBitrateInMbps: 5,
+          ),
+          throwsA(isA<AssertionError>()),
+        );
+      },
+    );
+
+    test('asserts targetSizeMb is positive', () {
+      expect(
+        () => Video(videoName: 't.mp4', targetSizeMb: 0),
+        throwsA(isA<AssertionError>()),
+      );
+    });
   });
 
   group('CompressionResult', () {
@@ -85,6 +111,27 @@ void main() {
         usedFormat: VideoFormat.h265,
       );
       expect(result.usedFormat, VideoFormat.h265);
+    });
+
+    test('OnSuccess targetSizeMet defaults to true and can be set false', () {
+      const met = OnSuccess(
+        destinationPath: '/path/to/video.mp4',
+        originalSize: 1000,
+        compressedSize: 500,
+        duration: 10.0,
+        ratio: 50.0,
+      );
+      expect(met.targetSizeMet, true);
+
+      const unmet = OnSuccess(
+        destinationPath: '/path/to/video.mp4',
+        originalSize: 1000,
+        compressedSize: 500,
+        duration: 10.0,
+        ratio: 50.0,
+        targetSizeMet: false,
+      );
+      expect(unmet.targetSizeMet, false);
     });
 
     test('OnFailure contains message', () {
