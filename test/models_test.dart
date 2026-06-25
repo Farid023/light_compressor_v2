@@ -218,4 +218,47 @@ void main() {
       expect(a.hashCode, a.copyWith(height: 200).hashCode);
     });
   });
+
+  group('CompressionEstimate', () {
+    test('fromMap parses and coerces numeric fields', () {
+      final est = CompressionEstimate.fromMap(<String, dynamic>{
+        'originalSizeBytes': 1000,
+        'estimatedSizeBytes': 250,
+        'targetBitrate': 2000000,
+        'outputWidth': 1280,
+        'outputHeight': 720,
+        'estimatedRatio': 75, // int on the wire → coerced to double
+      });
+      expect(est.originalSizeBytes, 1000);
+      expect(est.estimatedSizeBytes, 250);
+      expect(est.targetBitrate, 2000000);
+      expect(est.outputWidth, 1280);
+      expect(est.outputHeight, 720);
+      expect(est.estimatedRatio, 75.0);
+    });
+
+    test('fromMap defaults missing fields to zero', () {
+      final est = CompressionEstimate.fromMap(<String, dynamic>{});
+      expect(est.originalSizeBytes, 0);
+      expect(est.estimatedSizeBytes, 0);
+      expect(est.targetBitrate, 0);
+      expect(est.outputWidth, 0);
+      expect(est.outputHeight, 0);
+      expect(est.estimatedRatio, 0.0);
+    });
+  });
+
+  group('ThumbnailRequest', () {
+    test('default quality is 50', () {
+      const r = ThumbnailRequest(positionInMs: 1000);
+      expect(r.positionInMs, 1000);
+      expect(r.quality, 50);
+    });
+
+    test('custom values', () {
+      const r = ThumbnailRequest(positionInMs: 2000, quality: 90);
+      expect(r.positionInMs, 2000);
+      expect(r.quality, 90);
+    });
+  });
 }

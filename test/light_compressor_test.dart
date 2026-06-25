@@ -14,6 +14,9 @@ void main() {
     Object? mediaInfoResponse;
     Object? thumbnailResponse;
     Object? batchResponse;
+    Object? estimateResponse;
+    Object? thumbnailsResponse;
+    bool? isCompressingResponse;
     PlatformException? platformError;
 
     setUp(() {
@@ -30,6 +33,12 @@ void main() {
                 return mediaInfoResponse;
               case 'getVideoThumbnail':
                 return thumbnailResponse;
+              case 'getVideoThumbnails':
+                return thumbnailsResponse;
+              case 'getCompressionEstimate':
+                return estimateResponse;
+              case 'isCompressing':
+                return isCompressingResponse;
               case 'startBatchCompression':
                 return batchResponse;
               default:
@@ -43,6 +52,9 @@ void main() {
       mediaInfoResponse = null;
       thumbnailResponse = null;
       batchResponse = null;
+      estimateResponse = null;
+      thumbnailsResponse = null;
+      isCompressingResponse = null;
       platformError = null;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, null);
@@ -733,6 +745,160 @@ void main() {
             .take(2)
             .toList();
         expect(values, <double>[50.0, 0.0]);
+      },
+    );
+
+    // --- Phase 7: pre-flight & introspection ---
+
+    test(
+      'getCompressionEstimate forwards arguments and parses the estimate',
+      () async {
+        estimateResponse = <String, dynamic>{
+          'originalSizeBytes': 1000,
+          'estimatedSizeBytes': 250,
+          'targetBitrate': 2000000,
+          'outputWidth': 1280,
+          'outputHeight': 720,
+          'estimatedRatio': 75.0,
+        };
+
+        final estimate = await compressor.getCompressionEstimate(
+          '/path/to/input.mp4',
+          videoQuality: VideoQuality.medium,
+          videoFormat: VideoFormat.h265,
+          keepOriginalResolution: true,
+          videoWidth: 1280,
+          videoHeight: 720,
+          videoBitrateInMbps: 2,
+          disableAudio: true,
+        );
+
+        expect(log.last.method, 'getCompressionEstimate');
+        final args = log.last.arguments as Map<dynamic, dynamic>;
+        expect(args['path'], '/path/to/input.mp4');
+        expect(args['videoQuality'], 'medium');
+        expect(args['videoFormat'], 'h265');
+        expect(args['keepOriginalResolution'], true);
+        expect(args['videoWidth'], 1280);
+        expect(args['videoHeight'], 720);
+        expect(args['videoBitrateInMbps'], 2);
+        expect(args['disableAudio'], true);
+
+        expect(estimate.originalSizeBytes, 1000);
+        expect(estimate.estimatedSizeBytes, 250);
+        expect(estimate.targetBitrate, 2000000);
+        expect(estimate.outputWidth, 1280);
+        expect(estimate.outputHeight, 720);
+        expect(estimate.estimatedRatio, 75.0);
+      },
+    );
+
+    test(
+      'getCompressionEstimate throws EstimateException on ESTIMATE_FAILED',
+      () async {
+        platformError = PlatformException(
+          code: 'ESTIMATE_FAILED',
+          message: 'boom',
+        );
+
+        expect(
+          () => compressor.getCompressionEstimate(
+            '/path/to/input.mp4',
+            videoQuality: VideoQuality.medium,
+          ),
+          throwsA(isA<EstimateException>()),
+        );
+      },
+    );
+
+    test(
+      'getCompressionEstimate maps VIDEO_NOT_FOUND to VideoNotFoundException',
+      () async {
+        platformError = PlatformException(
+          code: 'VIDEO_NOT_FOUND',
+          message: 'missing',
+        );
+
+        expect(
+          () => compressor.getCompressionEstimate(
+            '/path/to/input.mp4',
+            videoQuality: VideoQuality.medium,
+          ),
+          throwsA(isA<VideoNotFoundException>()),
+        );
+      },
+    );
+
+    test('isCompressing returns the parsed boolean', () async {
+      isCompressingResponse = true;
+
+      final running = await compressor.isCompressing();
+
+      expect(running, isTrue);
+      expect(log.last.method, 'isCompressing');
+    });
+
+    test('isCompressing returns false when native returns null', () async {
+      isCompressingResponse = null;
+
+      expect(await compressor.isCompressing(), isFalse);
+    });
+
+    test(
+      'getVideoThumbnails forwards requests and returns ordered paths',
+      () async {
+        thumbnailsResponse = <String>['/cache/t0.jpg', '/cache/t1.jpg'];
+
+        final paths = await compressor
+            .getVideoThumbnails('/path/to/input.mp4', const <ThumbnailRequest>[
+              ThumbnailRequest(positionInMs: 0, quality: 80),
+              ThumbnailRequest(positionInMs: 5000),
+            ]);
+
+        expect(paths, <String>['/cache/t0.jpg', '/cache/t1.jpg']);
+        expect(log.last.method, 'getVideoThumbnails');
+        final args = log.last.arguments as Map<dynamic, dynamic>;
+        expect(args['path'], '/path/to/input.mp4');
+        final requests = args['requests'] as List<dynamic>;
+        expect(requests, hasLength(2));
+        expect((requests[0] as Map<dynamic, dynamic>)['positionInMs'], 0);
+        expect((requests[0] as Map<dynamic, dynamic>)['quality'], 80);
+        expect((requests[1] as Map<dynamic, dynamic>)['positionInMs'], 5000);
+        expect((requests[1] as Map<dynamic, dynamic>)['quality'], 50);
+      },
+    );
+
+    test('getVideoThumbnails clamps quality and floors position', () async {
+      thumbnailsResponse = <String>['/cache/t0.jpg'];
+
+      await compressor.getVideoThumbnails(
+        '/path/to/input.mp4',
+        const <ThumbnailRequest>[
+          ThumbnailRequest(positionInMs: -100, quality: 250),
+        ],
+      );
+
+      final args = log.last.arguments as Map<dynamic, dynamic>;
+      final requests = args['requests'] as List<dynamic>;
+      expect((requests[0] as Map<dynamic, dynamic>)['positionInMs'], 0);
+      expect((requests[0] as Map<dynamic, dynamic>)['quality'], 100);
+    });
+
+    test(
+      'getVideoThumbnails throws ThumbnailException on THUMBNAIL_FAILED',
+      () async {
+        platformError = PlatformException(
+          code: 'THUMBNAIL_FAILED',
+          message: 'no frame',
+        );
+
+        expect(
+          () => compressor.getVideoThumbnails(
+            '/path/to/input.mp4',
+            const <ThumbnailRequest>[ThumbnailRequest(positionInMs: 0)],
+          ),
+          throwsA(isA<ThumbnailException>()),
+        );
       },
     );
   });
