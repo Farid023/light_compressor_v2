@@ -265,7 +265,9 @@ public struct LightCompressor {
             info["durationMs"] = Int(durationSeconds * 1000.0)
         }
         if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-           let size = (attrs[.size] as? NSNumber)?.intValue {
+           let size = (attrs[.size] as? NSNumber)?.int64Value {
+            // int64Value (not intValue, which is Int32) so files >2 GB report
+            // their true size rather than a truncated/wrapped value (Phase 11d).
             info["fileSize"] = size
         }
         if let mimeType = mimeType(for: url) {

@@ -426,6 +426,23 @@ try {
 
 ---
 
+## Large files & memory
+
+A few things to know when compressing very large or very long sources:
+
+- **Audio re-encode buffers in memory.** Passing an `AudioConfig` (AAC re-encode)
+  makes Android hold the encoded audio track in memory until muxing, so memory
+  grows with audio **duration** (roughly tens of MB per hour). It's fine for
+  typical clips; for multi-hour sources, omit `AudioConfig` so the source audio
+  is copied through with no buffering.
+- **~4 GB MP4 output ceiling (Android).** `MediaMuxer`'s MP4 writer uses 32-bit
+  box offsets, so an output approaching 4 GB may fail or truncate. For very
+  large/long sources, pass `targetSizeMb` to keep the output well under that.
+- **iOS/macOS** stream through `AVAssetReader`/`AVAssetWriter`, so they don't
+  buffer the whole track; the 4 GB note is Android-specific.
+
+---
+
 ## 📖 API Reference
 
 ### `compressVideo()` → `Future<Result>`

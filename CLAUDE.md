@@ -254,6 +254,14 @@ a vendored fork of the LightCompressor library:
   `setOrientationHint` applied *after* the source-rotation normalization — and
   colour, baked by the `TextureRenderer` fragment shader (identity uniforms when
   no colour, so it stays free).
+  **Large-file limits (Phase 11d review):** `transcodeAudioToBuffer` holds the
+  whole encoded audio track in memory, so the AAC re-encode path's memory scales
+  with audio *duration* (the no-`AudioConfig` passthrough copy doesn't buffer) —
+  a streaming rewrite is a known follow-up. And `MediaMuxer`'s MP4 writer uses
+  32-bit box offsets, so outputs near **4 GB** can fail/truncate. Both are
+  documented in the README's "Large files & memory". (The size/bitrate/PTS math
+  is `Long`/`Double`; only Apple's `getMediaInfo` had a 32-bit `fileSize`
+  truncation, fixed in 11d via `int64Value`.)
 - [`config/Configuration.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/config/Configuration.kt)
   — the `Configuration` settings data class **and** the `StorageConfiguration`
   strategies that decide where output lands: `SharedStorageConfiguration`
