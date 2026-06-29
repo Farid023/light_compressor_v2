@@ -23,21 +23,21 @@ class VideoEdit {
     this.contrast,
     this.saturation,
   }) : assert(
-        trimStartMs == null || trimStartMs >= 0,
-        'trimStartMs must be greater than or equal to 0',
-      ),
-      assert(
-        trimEndMs == null || trimEndMs > (trimStartMs ?? 0),
-        'trimEndMs must be greater than trimStartMs (or 0 when no start)',
-      ),
-      assert(
-        rotationDegrees == null ||
-            rotationDegrees == 0 ||
-            rotationDegrees == 90 ||
-            rotationDegrees == 180 ||
-            rotationDegrees == 270,
-        'rotationDegrees must be one of 0, 90, 180, 270',
-      );
+         trimStartMs == null || trimStartMs >= 0,
+         'trimStartMs must be greater than or equal to 0',
+       ),
+       assert(
+         trimEndMs == null || trimEndMs > (trimStartMs ?? 0),
+         'trimEndMs must be greater than trimStartMs (or 0 when no start)',
+       ),
+       assert(
+         rotationDegrees == null ||
+             rotationDegrees == 0 ||
+             rotationDegrees == 90 ||
+             rotationDegrees == 180 ||
+             rotationDegrees == 270,
+         'rotationDegrees must be one of 0, 90, 180, 270',
+       );
 
   /// Start of the kept range, in milliseconds from the beginning of the source.
   ///

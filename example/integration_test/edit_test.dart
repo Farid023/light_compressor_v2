@@ -10,6 +10,10 @@
 //
 //   cd example && flutter test integration_test/edit_test.dart -d <deviceId>
 
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:light_compressor_v2/light_compressor_v2.dart';
@@ -130,5 +134,83 @@ void main() {
         reason: 'rotated displayHeight should equal the baseline displayWidth',
       );
     });
+
+    testWidgets('saturation: 0 desaturates the output toward grayscale', (
+      WidgetTester tester,
+    ) async {
+      if (source == null) return markTestSkipped(kNoClipSkipReason);
+
+      final int midMs =
+          ((await compressor.getMediaInfo(source!)).duration ?? Duration.zero)
+                  .inMilliseconds ~/
+              2;
+
+      final Result result = await compressor.compressVideo(
+        path: source!,
+        videoQuality: VideoQuality.medium,
+        isMinBitrateCheckEnabled: false,
+        video: Video(videoName: 'lc_it_gray'),
+        android: AndroidConfig(isSharedStorage: false),
+        ios: IOSConfig(saveInGallery: false),
+        edit: const VideoEdit(saturation: 0.0),
+      );
+      expect(result, isA<OnSuccess>());
+      final OnSuccess ok = result as OnSuccess;
+      await expectReadableVideo(compressor, ok.destinationPath);
+
+      // Compare the same frame in the source vs the desaturated output.
+      final double srcSpread = await _avgChannelSpread(
+        await compressor.getVideoThumbnail(
+          source!,
+          positionInMs: midMs,
+          quality: 90,
+        ),
+      );
+      final double outSpread = await _avgChannelSpread(
+        await compressor.getVideoThumbnail(
+          ok.destinationPath,
+          positionInMs: midMs,
+          quality: 90,
+        ),
+      );
+
+      // The source must have colour to remove, and the output must be close to
+      // grey (channels nearly equal). Generous threshold for JPEG chroma noise.
+      expect(
+        srcSpread,
+        greaterThan(outSpread + 6),
+        reason: 'source ($srcSpread) should be more colourful than the '
+            'desaturated output ($outSpread)',
+      );
+      expect(
+        outSpread,
+        lessThan(22),
+        reason: 'desaturated output should be near-grayscale ($outSpread)',
+      );
+    });
   });
+}
+
+/// Average per-pixel `|R-G| + |G-B|` over a centered grid of the decoded frame
+/// at [path]. Near `0` for a grayscale frame, much larger for a colourful one.
+Future<double> _avgChannelSpread(String path) async {
+  final ui.Codec codec = await ui.instantiateImageCodec(
+    File(path).readAsBytesSync(),
+  );
+  final ui.Image image = (await codec.getNextFrame()).image;
+  final ByteData data =
+      (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+  final Uint8List px = data.buffer.asUint8List();
+  final int w = image.width;
+  final int h = image.height;
+  int samples = 0;
+  double spread = 0;
+  for (int y = h ~/ 4; y < h * 3 ~/ 4; y += 8) {
+    for (int x = w ~/ 4; x < w * 3 ~/ 4; x += 8) {
+      final int i = (y * w + x) * 4;
+      spread += (px[i] - px[i + 1]).abs() + (px[i + 1] - px[i + 2]).abs();
+      samples++;
+    }
+  }
+  return samples > 0 ? spread / samples : 0;
 }

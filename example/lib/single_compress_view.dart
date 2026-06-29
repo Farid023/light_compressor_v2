@@ -38,6 +38,9 @@ class _SingleCompressViewState extends State<SingleCompressView>
   bool _twoPass = false;
   VideoFormat _videoFormat = VideoFormat.h264;
   int _rotation = 0;
+  double _brightness = 0; // -1..1, 0 = none
+  double _contrast = 1; // 0..2, 1 = none
+  double _saturation = 1; // 0..2, 1 = none
   final TextEditingController _targetSizeController = TextEditingController();
   final TextEditingController _fpsController = TextEditingController();
   final TextEditingController _audioKbpsController = TextEditingController();
@@ -74,6 +77,9 @@ class _SingleCompressViewState extends State<SingleCompressView>
       _result = null;
       _error = null;
       _rotation = 0;
+      _brightness = 0;
+      _contrast = 1;
+      _saturation = 1;
     });
 
     // Read metadata, grab a preview frame from the middle of the video, and
@@ -158,13 +164,18 @@ class _SingleCompressViewState extends State<SingleCompressView>
         (parsedTrimEnd != null && parsedTrimEnd > (trimStartMs ?? 0))
             ? parsedTrimEnd
             : null;
-    final edit = (trimStartMs != null || trimEndMs != null || _rotation != 0)
-        ? VideoEdit(
-            trimStartMs: trimStartMs,
-            trimEndMs: trimEndMs,
-            rotationDegrees: _rotation != 0 ? _rotation : null,
-          )
-        : null;
+    final hasColor = _brightness != 0 || _contrast != 1 || _saturation != 1;
+    final edit =
+        (trimStartMs != null || trimEndMs != null || _rotation != 0 || hasColor)
+            ? VideoEdit(
+                trimStartMs: trimStartMs,
+                trimEndMs: trimEndMs,
+                rotationDegrees: _rotation != 0 ? _rotation : null,
+                brightness: _brightness != 0 ? _brightness : null,
+                contrast: _contrast != 1 ? _contrast : null,
+                saturation: _saturation != 1 ? _saturation : null,
+              )
+            : null;
     try {
       final result = await widget.compressor.compressVideo(
         path: path,
@@ -211,6 +222,37 @@ class _SingleCompressViewState extends State<SingleCompressView>
       }
     }
   }
+
+  Widget _colorSlider(
+    String label,
+    double value,
+    double min,
+    double max,
+    ValueChanged<double> onChanged,
+  ) =>
+      Row(
+        children: [
+          SizedBox(
+            width: 78,
+            child: Text(label, style: const TextStyle(fontSize: 13)),
+          ),
+          Expanded(
+            child: Slider(
+              value: value,
+              min: min,
+              max: max,
+              onChanged: _stage == _Stage.compressing ? null : onChanged,
+            ),
+          ),
+          SizedBox(
+            width: 34,
+            child: Text(
+              value.toStringAsFixed(1),
+              style: const TextStyle(fontSize: 12, color: Colors.black54),
+            ),
+          ),
+        ],
+      );
 
   @override
   bool get wantKeepAlive => true;
@@ -360,6 +402,27 @@ class _SingleCompressViewState extends State<SingleCompressView>
               ),
             ],
           ),
+        ),
+        _colorSlider(
+          'Brightness',
+          _brightness,
+          -1,
+          1,
+          (double v) => setState(() => _brightness = v),
+        ),
+        _colorSlider(
+          'Contrast',
+          _contrast,
+          0,
+          2,
+          (double v) => setState(() => _contrast = v),
+        ),
+        _colorSlider(
+          'Saturation',
+          _saturation,
+          0,
+          2,
+          (double v) => setState(() => _saturation = v),
         ),
         if (_info != null || _thumbnailPath != null) ...[
           const SizedBox(height: 16),
