@@ -253,6 +253,12 @@ class LightCompressor {
   ///
   /// [edit] applies the same native trim/rotate edits to every video; see
   /// [VideoEdit].
+  ///
+  /// [maxConcurrent] caps how many videos transcode at the same time. Leaving it
+  /// `null` keeps each platform's default (Android compresses up to 2 at once;
+  /// Apple starts them all). Setting it (must be `>= 1`) is honoured on every
+  /// platform — use `1` for strictly sequential compression, or a higher value
+  /// to trade memory/heat for throughput. Has no effect on a single video.
   Future<List<Result>> compressVideos({
     required List<String> paths,
     required List<String> videoNames,
@@ -272,6 +278,7 @@ class LightCompressor {
     BackgroundConfig? background,
     AudioConfig? audio,
     VideoEdit? edit,
+    int? maxConcurrent,
   }) async {
     assert(
       paths.length == videoNames.length,
@@ -286,6 +293,10 @@ class LightCompressor {
       'targetSizeMb must be greater than 0',
     );
     assert(videoFps == null || videoFps > 0, 'videoFps must be greater than 0');
+    assert(
+      maxConcurrent == null || maxConcurrent >= 1,
+      'maxConcurrent must be greater than or equal to 1',
+    );
     if (paths.isEmpty) {
       return <Result>[];
     }
@@ -314,6 +325,7 @@ class LightCompressor {
           'videoFormat': videoFormat.name,
           'background': background?.toMap(),
           'edit': edit?.toMap(),
+          'maxConcurrent': maxConcurrent,
         });
 
     if (response == null) {
