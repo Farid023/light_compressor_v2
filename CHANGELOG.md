@@ -12,6 +12,13 @@
   `videoBitrateInMbps`. The new **`OnSuccess.targetSizeMet`** reports whether the
   target was achievable — `false` when the floor forced a larger output.
   Single-pass and approximate (typically within ~10–15%).
+- **Two-pass encoding** — pass `twoPass: true` (on `Video` / `compressVideos`,
+  alongside `targetSizeMb`) to land closer to the target size: the compressor
+  encodes once, and only if the output overshot the target does it re-encode a
+  second time at a corrected (lower) bitrate. An undershoot is kept as-is, so it
+  re-encodes only when needed (roughly doubling the time on overshooting clips).
+  The new **`OnSuccess.passesUsed`** reports how many passes ran (1 or 2). Ignored
+  without a `targetSizeMb`.
 - **Frame-rate control** — pass `videoFps` (on `Video` / `compressVideos`) to
   downsample the output frame rate (e.g. 30 → 24). Downsample-only: a value at or
   above the source rate leaves it unchanged (frames are never duplicated).
@@ -21,8 +28,8 @@
   - **Platform note:** `audioSampleRate` is applied on iOS/macOS; **Android
     re-encodes at the source sample rate** (no resampler), so only `bitrate`
     takes effect there.
-- Example app gains "max output size (MB)", "output FPS" and "audio bitrate
-  (kbps)" fields in the single-video flow.
+- Example app gains "max output size (MB)", a "Two-pass (precise size)" toggle,
+  "output FPS" and "audio bitrate (kbps)" fields in the single-video flow.
 
 All additions are additive and fully backward compatible — existing APIs are
 unchanged.

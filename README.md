@@ -25,7 +25,7 @@ Extreme high bitrates are reduced while maintaining good video quality, resultin
 - **Five quality presets** — the plugin calculates the optimal bitrate automatically.
 - **H.264 & H.265 (HEVC)** — pick the output codec via `videoFormat`; H.265 produces smaller files and automatically falls back to H.264 when the device can't encode it. `OnSuccess.usedFormat` reports the codec actually used.
 - **Custom resolution & bitrate** — override width, height, and bitrate when presets aren't enough.
-- **Target file size** — compress toward a maximum output size in megabytes via `targetSizeMb`; the compressor solves for the bitrate and reports whether the target was reachable (`OnSuccess.targetSizeMet`).
+- **Target file size** — compress toward a maximum output size in megabytes via `targetSizeMb`; the compressor solves for the bitrate and reports whether the target was reachable (`OnSuccess.targetSizeMet`). Add `twoPass: true` to re-encode once more when the first pass overshoots, landing closer to the target (`OnSuccess.passesUsed`).
 - **Frame-rate control** — downsample the output frame rate via `videoFps` (downsample-only — never duplicates frames).
 - **Audio re-encoding** — re-encode the audio track as AAC with a custom bitrate (and sample rate on iOS/macOS) via `AudioConfig`.
 - **Structured success result** — `OnSuccess` carries `originalSize`, `compressedSize`, `duration`, and `ratio` (percentage reduction).
@@ -222,6 +222,7 @@ final Result result = await compressor.compressVideo(
   video: Video(
     videoName: 'compressed.mp4',
     targetSizeMb: 10, // aim for ≤ 10 MB (mutually exclusive with videoBitrateInMbps)
+    twoPass: true,    // re-encode once more if the first pass overshoots 10 MB
     videoFps: 24,     // downsample 30 → 24 fps (downsample-only)
   ),
   audio: const AudioConfig(bitrate: 96000), // re-encode audio to ~96 kbps AAC
@@ -233,9 +234,13 @@ if (result is OnSuccess && !result.targetSizeMet) {
 }
 ```
 
-`targetSizeMb` is single-pass and approximate (typically within ~10–15%).
-`audioSampleRate` is honored on iOS/macOS; **Android re-encodes audio at the
-source sample rate** (no resampler), so only the audio `bitrate` applies there.
+`targetSizeMb` is approximate (single-pass is typically within ~10–15%). Add
+`twoPass: true` to land closer: the compressor re-encodes a second time only if
+the first pass overshot the target (an undershoot is kept as-is), roughly
+doubling the time on overshooting clips. `OnSuccess.passesUsed` reports how many
+passes ran. `audioSampleRate` is honored on iOS/macOS; **Android re-encodes audio
+at the source sample rate** (no resampler), so only the audio `bitrate` applies
+there.
 
 ### Listen to progress
 

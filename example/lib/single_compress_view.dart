@@ -35,6 +35,7 @@ class _SingleCompressViewState extends State<SingleCompressView>
   OnSuccess? _result;
   String? _error;
   bool _runInBackground = false;
+  bool _twoPass = false;
   VideoFormat _videoFormat = VideoFormat.h264;
   final TextEditingController _targetSizeController = TextEditingController();
   final TextEditingController _fpsController = TextEditingController();
@@ -149,6 +150,7 @@ class _SingleCompressViewState extends State<SingleCompressView>
           videoName: videoName,
           targetSizeMb: targetSizeMb,
           videoFps: videoFps,
+          twoPass: _twoPass,
         ),
         android: AndroidConfig(isSharedStorage: true, saveAt: SaveAt.Movies),
         ios: IOSConfig(saveInGallery: false),
@@ -237,6 +239,18 @@ class _SingleCompressViewState extends State<SingleCompressView>
               isDense: true,
             ),
           ),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Two-pass (precise size)'),
+          subtitle: const Text(
+            'Re-encode once more if the first pass overshoots the max size '
+            '(needs a max size; about doubles the time)',
+          ),
+          value: _twoPass,
+          onChanged: _stage == _Stage.compressing
+              ? null
+              : (value) => setState(() => _twoPass = value),
         ),
         Padding(
           padding: const EdgeInsets.only(top: 8),
@@ -489,6 +503,8 @@ class _ResultCard extends StatelessWidget {
               Text(
                 'Duration: ${formatDuration(Duration(milliseconds: (result.duration * 1000).round()))}',
               ),
+              if (result.passesUsed > 1)
+                Text('Encoded in ${result.passesUsed} passes'),
               if (!result.targetSizeMet)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
