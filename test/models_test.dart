@@ -393,6 +393,9 @@ void main() {
         'trimStartMs': null,
         'trimEndMs': null,
         'rotationDegrees': null,
+        'brightness': null,
+        'contrast': null,
+        'saturation': null,
       });
       expect(
         const VideoEdit(
@@ -404,6 +407,9 @@ void main() {
           'trimStartMs': 1000,
           'trimEndMs': 5000,
           'rotationDegrees': 180,
+          'brightness': null,
+          'contrast': null,
+          'saturation': null,
         },
       );
     });
@@ -452,6 +458,25 @@ void main() {
       for (final int deg in <int>[0, 90, 180, 270]) {
         expect(VideoEdit(rotationDegrees: deg).rotationDegrees, deg);
       }
+    });
+
+    test('stores color values', () {
+      const edit = VideoEdit(brightness: 0.2, contrast: 1.3, saturation: 0.5);
+      expect(edit.brightness, 0.2);
+      expect(edit.contrast, 1.3);
+      expect(edit.saturation, 0.5);
+    });
+
+    test('toMap clamps color to their valid ranges', () {
+      final map = const VideoEdit(
+        brightness: 5.0, // > 1.0
+        contrast: -2.0, // < 0.0
+        saturation: 9.0, // > 2.0
+      ).toMap();
+      expect(map['brightness'], 1.0);
+      expect(map['contrast'], 0.0);
+      expect(map['saturation'], 2.0);
+      expect(const VideoEdit(brightness: -3.0).toMap()['brightness'], -1.0);
     });
   });
 }
