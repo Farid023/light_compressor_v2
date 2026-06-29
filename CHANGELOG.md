@@ -14,8 +14,13 @@
     quarter-turn on top of the source orientation. This is a cheap
     container-metadata rotation (no extra pixel pass) that players honour — a 90°
     turn swaps the displayed dimensions.
-- Example app gains trim start/end (ms) fields and a 0/90/180/270 rotate selector
-  in the single-video flow.
+  - **Colour adjust** — `brightness` (`-1..1`), `contrast` (`0..2`) and
+    `saturation` (`0..2`) tweak the picture (CIColorControls semantics; `0` / `1`
+    / `1` = no change). Baked into the output pixels — Android via a GL shader,
+    Apple via a `CIColorControls` video composition. Exact cross-platform pixel
+    parity is not guaranteed.
+- Example app gains trim start/end (ms) fields, a 0/90/180/270 rotate selector and
+  brightness/contrast/saturation sliders in the single-video flow.
 
 All additions are additive and fully backward compatible — existing APIs are
 unchanged.
