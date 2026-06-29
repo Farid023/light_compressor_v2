@@ -37,12 +37,25 @@ interface CompressionListener {
     fun onFailure(index: Int, failureMessage: String, errorType: CompressionErrorType = CompressionErrorType.UNKNOWN)
 
     @WorkerThread
-    fun onProgress(index: Int, percent: Float)
+    fun onProgress(index: Int, progress: ProgressInfo)
 
     @WorkerThread
     fun onCancelled(index: Int)
 }
 
 interface CompressionProgressListener {
-    fun onProgressChanged(index: Int, percent: Float)
+    fun onProgressChanged(index: Int, progress: ProgressInfo)
 }
+
+/**
+ * A progress sample for one video (Phase 11b). [percent] is `0..100`;
+ * [bytesProcessed] is encoded video output bytes written so far; [etaMs] is the
+ * estimated time remaining in ms (`-1` while not yet estimable); [elapsedMs] is
+ * time since this encode started.
+ */
+data class ProgressInfo(
+    val percent: Float,
+    val bytesProcessed: Long,
+    val etaMs: Long,
+    val elapsedMs: Long,
+)

@@ -243,8 +243,8 @@ object VideoCompressor : CoroutineScope by MainScope() {
             destPath,
             configuration,
             object : CompressionProgressListener {
-                override fun onProgressChanged(index: Int, percent: Float) {
-                    listener.onProgress(index, percent)
+                override fun onProgressChanged(index: Int, progress: ProgressInfo) {
+                    listener.onProgress(index, progress)
                 }
             },
         )

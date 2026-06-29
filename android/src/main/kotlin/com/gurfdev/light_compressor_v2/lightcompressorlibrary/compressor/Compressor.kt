@@ -7,6 +7,7 @@ import android.os.Build
 import android.util.Log
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionErrorType
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionProgressListener
+import com.gurfdev.light_compressor_v2.lightcompressorlibrary.ProgressInfo
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoFormat
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.config.Configuration
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.findTrack
@@ -443,6 +444,13 @@ object Compressor {
             // (possibly estimated) input duration when reporting back to Dart.
             var maxPresentationTimeUs = 0L
 
+            // Phase 11b: progress observability. encodeStartMs anchors elapsed
+            // time (and the ETA projection); outputBytes accumulates encoded
+            // video sample bytes written to the muxer (audio is muxed on its own
+            // path, so this is the live video-output size, an indicator).
+            val encodeStartMs = System.currentTimeMillis()
+            var outputBytes = 0L
+
             // Held outside the try so the outer finally can always release the
             // native muxer, including on the early-return error paths below.
             var mediaMuxerRef: MediaMuxer? = null
@@ -664,6 +672,7 @@ object Compressor {
                                         mediaMuxer.writeSampleData(
                                             videoTrackIndex, encodedData, bufferInfo
                                         )
+                                        outputBytes += bufferInfo.size.toLong()
                                     }
 
                                     outputDone =
@@ -749,9 +758,23 @@ object Compressor {
                                                     }
 
                                                     val progress = (rebasedUs.toFloat() / duration.toFloat() * 100).coerceAtMost(99f)
+                                                    val elapsedMs =
+                                                        System.currentTimeMillis() - encodeStartMs
+                                                    val frac = progress / 100f
+                                                    // ETA only once there is enough signal; -1 = "not yet".
+                                                    val etaMs = if (frac > 0.01f) {
+                                                        (elapsedMs / frac - elapsedMs).toLong()
+                                                    } else {
+                                                        -1L
+                                                    }
                                                     compressionProgressListener.onProgressChanged(
                                                         id,
-                                                        progress
+                                                        ProgressInfo(
+                                                            progress,
+                                                            outputBytes,
+                                                            etaMs,
+                                                            elapsedMs,
+                                                        )
                                                     )
 
                                                     inputSurface.swapBuffers()

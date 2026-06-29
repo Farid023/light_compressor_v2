@@ -18,6 +18,7 @@ import android.media.MediaMetadataRetriever
 import java.io.FileOutputStream
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionErrorType
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionListener
+import com.gurfdev.light_compressor_v2.lightcompressorlibrary.ProgressInfo
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoCompressor
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoFormat
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoQuality
@@ -244,12 +245,17 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
             listener = object : CompressionListener {
                 override fun onStart(index: Int) {}
 
-                override fun onProgress(index: Int, percent: Float) {
+                override fun onProgress(index: Int, progress: ProgressInfo) {
                     Handler(Looper.getMainLooper()).post {
-                        eventSink?.success(percent)
+                        eventSink?.success(mapOf(
+                            "percent" to progress.percent.toDouble(),
+                            "bytesProcessed" to progress.bytesProcessed,
+                            "etaMs" to progress.etaMs,
+                            "elapsedMs" to progress.elapsedMs,
+                        ))
                         if (background != null) {
                             CompressionForegroundService.updateProgress(
-                                applicationContext, percent.toInt(), videoName,
+                                applicationContext, progress.percent.toInt(), videoName,
                             )
                         }
                     }
@@ -403,15 +409,18 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
             listener = object : CompressionListener {
                 override fun onStart(index: Int) {}
 
-                override fun onProgress(index: Int, percent: Float) {
+                override fun onProgress(index: Int, progress: ProgressInfo) {
                     mainHandler.post {
-                        if (index in 0 until count) percents[index] = percent
+                        if (index in 0 until count) percents[index] = progress.percent
                         val overall = if (count > 0) percents.sum() / count else 0f
                         batchEventSink?.success(mapOf(
                             "type" to "progress",
                             "index" to index,
-                            "percent" to percent.toDouble(),
-                            "overallPercent" to overall.toDouble()
+                            "percent" to progress.percent.toDouble(),
+                            "overallPercent" to overall.toDouble(),
+                            "bytesProcessed" to progress.bytesProcessed,
+                            "etaMs" to progress.etaMs,
+                            "elapsedMs" to progress.elapsedMs,
                         ))
                         if (background != null) {
                             // Videos compress in parallel, so there is no single
