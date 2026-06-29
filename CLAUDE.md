@@ -438,9 +438,10 @@ build step.
   `flutter analyze` must be clean.
 - **Source and code comments are in English** (user-facing communication is in
   Russian).
-- **Releasing:** bump the version in [`pubspec.yaml`](pubspec.yaml) and add a
-  [`CHANGELOG.md`](CHANGELOG.md) entry; [`.pubignore`](.pubignore) (which pub uses
-  *instead of* `.gitignore`) controls what ships. `git push` and
-  `flutter pub publish` are done by the maintainer — the agent environment has no
-  git credentials.
+- **Releasing:** bump the version in [`pubspec.yaml`](pubspec.yaml), add a
+  [`CHANGELOG.md`](CHANGELOG.md) entry, and **update the install snippet version
+  in [`README.md`](README.md)** (the `light_compressor_v2: ^x.y.z` line — easy to
+  forget); [`.pubignore`](.pubignore) (which pub uses *instead of* `.gitignore`)
+  controls what ships. `git push` and `flutter pub publish` are done by the
+  maintainer — the agent environment has no git credentials.
 - **Commit messages** carry no `Co-Authored-By` / agent-attribution trailer.
