@@ -147,6 +147,43 @@ void main() {
       expect(values.every((double v) => v >= 0 && v <= 100), isTrue);
     });
 
+    testWidgets('onProgressDetail reports rich progress samples', (
+      WidgetTester tester,
+    ) async {
+      if (source == null) return markTestSkipped(kNoClipSkipReason);
+      final List<CompressionProgress> samples = <CompressionProgress>[];
+      final sub = compressor.onProgressDetail.listen(samples.add);
+      await compressSample(name: 'lc_it_progress_detail');
+      await sub.cancel();
+
+      expect(samples, isNotEmpty);
+      expect(
+        samples.every(
+            (CompressionProgress p) => p.percent >= 0 && p.percent <= 100),
+        isTrue,
+      );
+      // The rich payload arrives (not just a bare percent): elapsed time is
+      // always reported by both natives.
+      expect(
+        samples.any((CompressionProgress p) => p.elapsedMs != null),
+        isTrue,
+        reason: 'expected elapsedMs in the rich payload',
+      );
+      // When present, the extra fields are sane (non-negative).
+      expect(
+        samples.every((CompressionProgress p) => (p.elapsedMs ?? 0) >= 0),
+        isTrue,
+      );
+      expect(
+        samples.every((CompressionProgress p) => (p.etaMs ?? 0) >= 0),
+        isTrue,
+      );
+      expect(
+        samples.every((CompressionProgress p) => (p.bytesProcessed ?? 0) >= 0),
+        isTrue,
+      );
+    });
+
     testWidgets('onBatchUpdate emits progress and completion events', (
       WidgetTester tester,
     ) async {
