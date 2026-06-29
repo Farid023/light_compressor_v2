@@ -52,6 +52,9 @@ data class Configuration(
     // Max videos transcoded at once in a batch (Phase 11a). null keeps the
     // default cap (MAX_CONCURRENT_COMPRESSIONS); coerced to >= 1 when sized.
     var maxConcurrent: Int? = null,
+    // Opt-in structured debug logging (Phase 11c). Paths are reduced to base
+    // names in the logs. Off by default.
+    var debugLogging: Boolean = false,
 ) {
     @Deprecated("Use VideoResizer to override the output video dimensions.", ReplaceWith("Configuration(quality, isMinBitrateCheckEnabled, videoBitrateInMbps, disableAudio, resizer = if (keepOriginalResolution) null else VideoResizer.auto, videoNames)"))
     constructor(

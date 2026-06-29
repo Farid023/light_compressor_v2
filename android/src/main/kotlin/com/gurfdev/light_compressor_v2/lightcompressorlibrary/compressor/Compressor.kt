@@ -40,6 +40,13 @@ object Compressor {
     private const val HEVC_MIME = "video/hevc"
     private const val MEDIACODEC_TIMEOUT_DEFAULT = 100L
 
+    // Phase 11c: tag for opt-in debug logging (gated on Configuration.debugLogging).
+    private const val DEBUG_TAG = "LightCompressor"
+
+    /** A path reduced to its base name, for privacy-safe debug logging. */
+    private fun redact(path: String?): String =
+        path?.substringAfterLast('/') ?: "?"
+
     private const val INVALID_BITRATE =
         "The provided bitrate is smaller than what is needed for compression " +
                 "try to set isMinBitRateEnabled to false"
@@ -334,6 +341,18 @@ object Compressor {
         val targetBytes = configuration.targetSizeBytes ?: 0L
         val floor = minOf(MIN_BITRATE, actualBitrate).toDouble()
 
+        if (configuration.debugLogging) {
+            Log.d(
+                DEBUG_TAG,
+                "plan #$index out=${redact(destination)} dims=${newWidth}x$newHeight " +
+                    "bitrate=$newBitrate codec=${if (outputMime == HEVC_MIME) "h265" else "h264"} " +
+                    "fps=${configuration.videoFps ?: "src"} " +
+                    "target=${configuration.targetSizeBytes ?: "-"} targetMet=$targetSizeMet " +
+                    "twoPass=$twoPassEnabled rotation=$rotation " +
+                    "color=[$colorBrightness,$colorContrast,$colorSaturation]",
+            )
+        }
+
         var passesUsed = 1
         // Pass 1 reuses the extractor set up above; start() releases it.
         var result = start(
@@ -399,6 +418,21 @@ object Compressor {
                     try { pass2Fis?.close() } catch (ignored: Exception) {}
                 }
             }
+        }
+
+        if (configuration.debugLogging) {
+            Log.d(
+                DEBUG_TAG,
+                if (result.success) {
+                    "done #$index out=${redact(result.path)} size=${result.size} " +
+                        "durationMs=${result.duration} passes=$passesUsed " +
+                        "codec=${result.videoFormat}"
+                } else if (result.cancelled) {
+                    "cancelled #$index"
+                } else {
+                    "failed #$index type=${result.errorType} msg=${result.failureMessage}"
+                },
+            )
         }
 
         return@withContext result.copy(passesUsed = passesUsed)
