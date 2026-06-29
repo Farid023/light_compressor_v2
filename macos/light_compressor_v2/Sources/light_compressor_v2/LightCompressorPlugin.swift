@@ -78,7 +78,8 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                             targetSizeBytes: myArgs["targetSizeBytes"] as? Int,
                             videoFps: myArgs["videoFps"] as? Int,
                             audioBitrate: myArgs["audioBitrate"] as? Int,
-                            audioSampleRate: myArgs["audioSampleRate"] as? Int)
+                            audioSampleRate: myArgs["audioSampleRate"] as? Int,
+                            twoPass: myArgs["twoPass"] as? Bool ?? false)
                     )],
                     progressQueue: .main,
                     progressHandler: { _, progress in
@@ -94,7 +95,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                     completion: { compressionResult in
                         
                         switch compressionResult {
-                        case .onSuccess(let index, let outputURL, let duration, let usedFormat, let targetSizeMet):
+                        case .onSuccess(let index, let outputURL, let duration, let usedFormat, let targetSizeMet, let passesUsed):
                             if(saveInGallery) {
                                 DispatchQueue.main.async {
                                     PHPhotoLibrary.shared().performChanges({
@@ -114,6 +115,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                                 let compressedSize: Int
                                 let usedFormat: String
                                 let targetSizeMet: Bool
+                                let passesUsed: Int
                             }
                             let response = SuccessResponse(
                                 onSuccess: outputURL.path,
@@ -122,7 +124,8 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                                 originalSize: originalSize,
                                 compressedSize: compressedSize,
                                 usedFormat: usedFormat.wireValue,
-                                targetSizeMet: targetSizeMet
+                                targetSizeMet: targetSizeMet,
+                                passesUsed: passesUsed
                             )
                             replyOnce(response.toJson)
                             
@@ -201,6 +204,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
         let videoFps           = args["videoFps"]           as? Int
         let audioBitrate       = args["audioBitrate"]       as? Int
         let audioSampleRate    = args["audioSampleRate"]    as? Int
+        let twoPass            = args["twoPass"]            as? Bool ?? false
         let videoHeight        = args["videoHeight"]        as? Int
         let videoWidth         = args["videoWidth"]         as? Int
         let videoSize: CGSize? = videoWidth != nil && videoHeight != nil
@@ -218,7 +222,8 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
             targetSizeBytes: targetSizeBytes,
             videoFps: videoFps,
             audioBitrate: audioBitrate,
-            audioSampleRate: audioSampleRate)
+            audioSampleRate: audioSampleRate,
+            twoPass: twoPass)
 
         let count = paths.count
         var videos: [LightCompressor.Video] = []
@@ -281,7 +286,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                 case .onStart:
                     break
 
-                case .onSuccess(let index, let outputURL, let duration, let usedFormat, let targetSizeMet):
+                case .onSuccess(let index, let outputURL, let duration, let usedFormat, let targetSizeMet, let passesUsed):
                     if saveInGallery {
                         DispatchQueue.main.async {
                             PHPhotoLibrary.shared().performChanges {
@@ -300,6 +305,7 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                         "duration": duration,
                         "usedFormat": usedFormat.wireValue,
                         "targetSizeMet": targetSizeMet,
+                        "passesUsed": passesUsed,
                     ])
 
                 case .onFailure(let index, let error):
