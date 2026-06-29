@@ -29,6 +29,10 @@ object Compressor {
     // 2Mbps
     private const val MIN_BITRATE = 2000000
 
+    // Phase 8d: a two-pass run triggers a corrective second pass only when the
+    // first pass overshoots the target by more than this fraction.
+    private const val TWO_PASS_TOLERANCE = 0.10
+
     // H.264 Advanced Video Coding
     private const val MIME_TYPE = "video/avc"
     // H.265 High Efficiency Video Coding
@@ -288,22 +292,81 @@ object Compressor {
                 transcodeAudioToBuffer(context, srcUri, file, configuration.audioBitrate!!)
             else null
 
-        return@withContext start(
-            index,
-            newWidth,
-            newHeight,
-            destination,
-            newBitrate,
-            configuration.disableAudio,
-            extractor,
-            listener,
-            duration,
-            rotation,
-            outputMime,
-            targetSizeMet,
-            configuration.videoFps,
-            audioTranscode,
+        // Phase 8d: two-pass. Enabled only when requested AND a target size was
+        // set AND it is reachable (a floor-bound pass 1 can't be improved by a
+        // lower bitrate). Pass 1 encodes at the solved bitrate; if it overshoots,
+        // pass 2 re-encodes at a corrected (lower) bitrate. Capped at two passes.
+        // Each pass's progress runs 0..99 (see start()); the terminal 100 is
+        // emitted once, after this function returns.
+        val twoPassEnabled =
+            configuration.twoPass && configuration.targetSizeBytes != null && targetSizeMet
+        val targetBytes = configuration.targetSizeBytes ?: 0L
+        val floor = minOf(MIN_BITRATE, actualBitrate).toDouble()
+
+        var passesUsed = 1
+        // Pass 1 reuses the extractor set up above; start() releases it.
+        var result = start(
+            index, newWidth, newHeight, destination, newBitrate,
+            configuration.disableAudio, extractor, listener, duration, rotation,
+            outputMime, targetSizeMet, configuration.videoFps, audioTranscode,
         )
+
+        if (twoPassEnabled && result.success && isRunning &&
+            result.size > targetBytes * (1.0 + TWO_PASS_TOLERANCE)
+        ) {
+            val adjusted = (newBitrate.toDouble() * targetBytes / result.size)
+                .coerceIn(floor, actualBitrate.toDouble()).toInt()
+            // Skip pass 2 when it can't lower the bitrate (already at the floor).
+            if (adjusted < newBitrate) {
+                // Pass 2 writes to a temp; the valid pass-1 output is kept until
+                // pass 2 succeeds, then atomically replaced. A fresh extractor is
+                // required — start() drains and releases the one it is given.
+                val tempDest = "$destination.p2.mp4"
+                val pass2Extractor = MediaExtractor()
+                var pass2Fis: FileInputStream? = null
+                try {
+                    try {
+                        pass2Fis = FileInputStream(file)
+                        pass2Extractor.setDataSource(pass2Fis.fd)
+                    } catch (e: Exception) {
+                        printException(e)
+                        try { pass2Fis?.close() } catch (ignored: Exception) {}
+                        pass2Fis = null
+                        pass2Extractor.setDataSource(context, srcUri, null)
+                    }
+                    val pass2 = start(
+                        index, newWidth, newHeight, tempDest, adjusted,
+                        configuration.disableAudio, pass2Extractor, listener,
+                        duration, rotation, outputMime, targetSizeMet,
+                        configuration.videoFps, audioTranscode,
+                    )
+                    passesUsed = 2
+                    if (pass2.success) {
+                        try {
+                            File(destination).delete()
+                            File(tempDest).renameTo(File(destination))
+                        } catch (e: Exception) { printException(e) }
+                        result = pass2.copy(
+                            path = destination,
+                            size = File(destination).length(),
+                        )
+                    } else if (pass2.cancelled) {
+                        // Cancelled mid pass-2 — report the cancellation rather
+                        // than the (now stale) pass-1 success.
+                        try { File(tempDest).delete() } catch (ignored: Exception) {}
+                        result = pass2
+                    } else {
+                        // Pass 2 failed — discard it, keep the valid pass 1.
+                        try { File(tempDest).delete() } catch (ignored: Exception) {}
+                    }
+                } finally {
+                    try { pass2Extractor.release() } catch (ignored: Exception) {}
+                    try { pass2Fis?.close() } catch (ignored: Exception) {}
+                }
+            }
+        }
+
+        return@withContext result.copy(passesUsed = passesUsed)
 
         } finally {
             // Release metadata resources and close the file descriptors that were
