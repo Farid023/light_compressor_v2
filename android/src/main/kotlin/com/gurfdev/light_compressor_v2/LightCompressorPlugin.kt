@@ -398,6 +398,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                 brightness = edit?.brightness,
                 contrast = edit?.contrast,
                 saturation = edit?.saturation,
+                maxConcurrent = call.argument("maxConcurrent"),
             ),
             listener = object : CompressionListener {
                 override fun onStart(index: Int) {}

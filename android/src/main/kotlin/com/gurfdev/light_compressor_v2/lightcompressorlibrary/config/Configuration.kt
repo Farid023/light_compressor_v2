@@ -49,6 +49,9 @@ data class Configuration(
     var brightness: Double? = null,
     var contrast: Double? = null,
     var saturation: Double? = null,
+    // Max videos transcoded at once in a batch (Phase 11a). null keeps the
+    // default cap (MAX_CONCURRENT_COMPRESSIONS); coerced to >= 1 when sized.
+    var maxConcurrent: Int? = null,
 ) {
     @Deprecated("Use VideoResizer to override the output video dimensions.", ReplaceWith("Configuration(quality, isMinBitrateCheckEnabled, videoBitrateInMbps, disableAudio, resizer = if (keepOriginalResolution) null else VideoResizer.auto, videoNames)"))
     constructor(

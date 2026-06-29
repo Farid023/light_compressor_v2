@@ -133,8 +133,13 @@ object VideoCompressor : CoroutineScope by MainScope() {
         // the flag and clobber a cancel() request mid-batch.
         isRunning = true
         jobs.clear()
-        // Bound concurrent transcodes per batch (see MAX_CONCURRENT_COMPRESSIONS).
-        val semaphore = Semaphore(MAX_CONCURRENT_COMPRESSIONS)
+        // Bound concurrent transcodes per batch. Honors a caller-supplied
+        // maxConcurrent (coerced to >= 1); otherwise the default cap (see
+        // MAX_CONCURRENT_COMPRESSIONS) — running a whole batch at once
+        // oversubscribes the hardware codecs.
+        val concurrency =
+            configuration.maxConcurrent?.coerceAtLeast(1) ?: MAX_CONCURRENT_COMPRESSIONS
+        val semaphore = Semaphore(concurrency)
         for (i in uris.indices) {
 
             val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
