@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreImage
 import ImageIO
 
 /// Desired quality level for video compression.
@@ -125,6 +126,9 @@ public struct LightCompressor {
             public let trimStartMs: Int?
             public let trimEndMs: Int?
             public let rotationDegrees: Int?
+            public let brightness: Double?
+            public let contrast: Double?
+            public let saturation: Double?
 
             public init(
                 quality: VideoQuality = .medium,
@@ -141,7 +145,10 @@ public struct LightCompressor {
                 twoPass: Bool = false,
                 trimStartMs: Int? = nil,
                 trimEndMs: Int? = nil,
-                rotationDegrees: Int? = nil
+                rotationDegrees: Int? = nil,
+                brightness: Double? = nil,
+                contrast: Double? = nil,
+                saturation: Double? = nil
             ) {
                 self.quality = quality
                 self.isMinBitrateCheckEnabled = isMinBitrateCheckEnabled
@@ -158,6 +165,9 @@ public struct LightCompressor {
                 self.trimStartMs = trimStartMs
                 self.trimEndMs = trimEndMs
                 self.rotationDegrees = rotationDegrees
+                self.brightness = brightness
+                self.contrast = contrast
+                self.saturation = saturation
             }
         }
 
@@ -699,7 +709,36 @@ public struct LightCompressor {
             kCVPixelBufferPixelFormatTypeKey as String:
                 Int(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) as AnyObject
         ]
-        let videoReaderOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: videoReaderSettings)
+        // Color adjust (Phase 9c): when any color knob is set, read through a
+        // video composition that applies CIColorControls; otherwise keep the
+        // cheap track output. Identity = brightness 0, contrast 1, saturation 1.
+        let videoReaderOutput: AVAssetReaderOutput
+        if configuration.brightness != nil || configuration.contrast != nil
+            || configuration.saturation != nil {
+            let brightness = configuration.brightness ?? 0
+            let contrast = configuration.contrast ?? 1
+            let saturation = configuration.saturation ?? 1
+            let composition = AVVideoComposition(
+                asset: videoAsset,
+                applyingCIFiltersWithHandler: { request in
+                    let filter = CIFilter(name: "CIColorControls")
+                    filter?.setValue(
+                        request.sourceImage.clampedToExtent(), forKey: kCIInputImageKey)
+                    filter?.setValue(brightness, forKey: kCIInputBrightnessKey)
+                    filter?.setValue(contrast, forKey: kCIInputContrastKey)
+                    filter?.setValue(saturation, forKey: kCIInputSaturationKey)
+                    let filtered = filter?.outputImage?
+                        .cropped(to: request.sourceImage.extent) ?? request.sourceImage
+                    request.finish(with: filtered, context: nil)
+                })
+            let compOutput = AVAssetReaderVideoCompositionOutput(
+                videoTracks: [videoTrack], videoSettings: videoReaderSettings)
+            compOutput.videoComposition = composition
+            videoReaderOutput = compOutput
+        } else {
+            videoReaderOutput = AVAssetReaderTrackOutput(
+                track: videoTrack, outputSettings: videoReaderSettings)
+        }
 
         guard let videoReader = try? AVAssetReader(asset: videoAsset) else {
             onPassComplete(.failure(CompressionError(title: "Failed to create video reader")))
