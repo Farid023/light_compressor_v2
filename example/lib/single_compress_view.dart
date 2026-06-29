@@ -37,15 +37,20 @@ class _SingleCompressViewState extends State<SingleCompressView>
   bool _runInBackground = false;
   bool _twoPass = false;
   VideoFormat _videoFormat = VideoFormat.h264;
+  int _rotation = 0;
   final TextEditingController _targetSizeController = TextEditingController();
   final TextEditingController _fpsController = TextEditingController();
   final TextEditingController _audioKbpsController = TextEditingController();
+  final TextEditingController _trimStartController = TextEditingController();
+  final TextEditingController _trimEndController = TextEditingController();
 
   @override
   void dispose() {
     _targetSizeController.dispose();
     _fpsController.dispose();
     _audioKbpsController.dispose();
+    _trimStartController.dispose();
+    _trimEndController.dispose();
     super.dispose();
   }
 
@@ -57,6 +62,8 @@ class _SingleCompressViewState extends State<SingleCompressView>
     _targetSizeController.clear();
     _fpsController.clear();
     _audioKbpsController.clear();
+    _trimStartController.clear();
+    _trimEndController.clear();
     setState(() {
       _stage = _Stage.ready;
       _sourcePath = path;
@@ -66,6 +73,7 @@ class _SingleCompressViewState extends State<SingleCompressView>
       _thumbnails = const <String>[];
       _result = null;
       _error = null;
+      _rotation = 0;
     });
 
     // Read metadata, grab a preview frame from the middle of the video, and
@@ -141,6 +149,22 @@ class _SingleCompressViewState extends State<SingleCompressView>
     final audio = (parsedAudioKbps != null && parsedAudioKbps > 0)
         ? AudioConfig(bitrate: parsedAudioKbps * 1000)
         : null;
+    final parsedTrimStart = int.tryParse(_trimStartController.text.trim());
+    final parsedTrimEnd = int.tryParse(_trimEndController.text.trim());
+    final trimStartMs = (parsedTrimStart != null && parsedTrimStart > 0)
+        ? parsedTrimStart
+        : null;
+    final trimEndMs =
+        (parsedTrimEnd != null && parsedTrimEnd > (trimStartMs ?? 0))
+            ? parsedTrimEnd
+            : null;
+    final edit = (trimStartMs != null || trimEndMs != null || _rotation != 0)
+        ? VideoEdit(
+            trimStartMs: trimStartMs,
+            trimEndMs: trimEndMs,
+            rotationDegrees: _rotation != 0 ? _rotation : null,
+          )
+        : null;
     try {
       final result = await widget.compressor.compressVideo(
         path: path,
@@ -157,6 +181,7 @@ class _SingleCompressViewState extends State<SingleCompressView>
         videoFormat: _videoFormat,
         background: _runInBackground ? const BackgroundConfig() : null,
         audio: audio,
+        edit: edit,
       );
       if (!mounted) return;
       setState(() {
@@ -278,6 +303,62 @@ class _SingleCompressViewState extends State<SingleCompressView>
                   'Re-encode AAC at this bitrate; blank copies the source',
               isDense: true,
             ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _trimStartController,
+                  enabled: _stage != _Stage.compressing,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Trim start (ms)',
+                    helperText: 'Optional',
+                    isDense: true,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: _trimEndController,
+                  enabled: _stage != _Stage.compressing,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Trim end (ms)',
+                    helperText: 'Optional',
+                    isDense: true,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: Row(
+            children: [
+              const Text('Rotate'),
+              const SizedBox(width: 12),
+              Expanded(
+                child: SegmentedButton<int>(
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(value: 0, label: Text('0°')),
+                    ButtonSegment(value: 90, label: Text('90°')),
+                    ButtonSegment(value: 180, label: Text('180°')),
+                    ButtonSegment(value: 270, label: Text('270°')),
+                  ],
+                  selected: {_rotation},
+                  onSelectionChanged: _stage == _Stage.compressing
+                      ? null
+                      : (Set<int> s) => setState(() => _rotation = s.first),
+                ),
+              ),
+            ],
           ),
         ),
         if (_info != null || _thumbnailPath != null) ...[
