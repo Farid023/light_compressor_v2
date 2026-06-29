@@ -46,17 +46,39 @@ class LightCompressor {
     'compression/batch-stream',
   );
 
+  Stream<dynamic>? _progressEvents;
   Stream<double>? _onProgressUpdated;
+  Stream<CompressionProgress>? _onProgressDetail;
   Stream<BatchEvent>? _onBatchUpdate;
+
+  /// The shared raw `compression/stream` broadcast, mapped by both
+  /// [onProgressUpdated] and [onProgressDetail] (one native subscription).
+  Stream<dynamic> get _rawProgress =>
+      _progressEvents ??= _progressStream.receiveBroadcastStream();
 
   /// A broadcast stream that emits the current compression progress.
   ///
-  /// The emitted values range from `0.0` to `100.0`.
+  /// The emitted values range from `0.0` to `100.0`. For estimated time
+  /// remaining and bytes processed, use [onProgressDetail] instead.
   Stream<double> get onProgressUpdated {
-    _onProgressUpdated ??= _progressStream.receiveBroadcastStream().map<double>(
-      (dynamic result) => (result as num?)?.toDouble() ?? 0.0,
+    _onProgressUpdated ??= _rawProgress.map<double>(
+      (dynamic event) => CompressionProgress.fromEvent(event).percent,
     );
     return _onProgressUpdated!;
+  }
+
+  /// A broadcast stream of rich single-video progress samples.
+  ///
+  /// Each [CompressionProgress] carries the percentage plus, when the platform
+  /// reports them, the estimated time remaining (`etaMs`), elapsed time
+  /// (`elapsedMs`) and encoded output bytes so far (`bytesProcessed`). For just
+  /// the percentage, [onProgressUpdated] is simpler. Batch progress (including
+  /// the same fields) arrives via [onBatchUpdate].
+  Stream<CompressionProgress> get onProgressDetail {
+    _onProgressDetail ??= _rawProgress.map<CompressionProgress>(
+      CompressionProgress.fromEvent,
+    );
+    return _onProgressDetail!;
   }
 
   /// A broadcast stream of [BatchEvent]s emitted during [compressVideos].
@@ -74,10 +96,14 @@ class LightCompressor {
       );
       final int index = (map['index'] as num?)?.toInt() ?? 0;
       if (map['type'] == 'progress') {
+        final int? eta = (map['etaMs'] as num?)?.toInt();
         return BatchProgress(
           index: index,
           percent: (map['percent'] as num?)?.toDouble() ?? 0.0,
           overallPercent: (map['overallPercent'] as num?)?.toDouble() ?? 0.0,
+          bytesProcessed: (map['bytesProcessed'] as num?)?.toInt(),
+          etaMs: (eta == null || eta < 0) ? null : eta,
+          elapsedMs: (map['elapsedMs'] as num?)?.toInt(),
         );
       }
       return BatchItemCompleted(index: index, result: _resultFromMap(map));
