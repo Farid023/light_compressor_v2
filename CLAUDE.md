@@ -50,10 +50,14 @@ plugin:
   `startBatchCompression`, `cancelCompression`, `clearCache`, `getMediaInfo`,
   `getVideoThumbnail`, `getVideoThumbnails`, `getCompressionEstimate`,
   `isCompressing`.
-- **EventChannel `compression/stream`** — single-video progress: a bare `double`
-  `0`–`100`.
+- **EventChannel `compression/stream`** — single-video progress: a map
+  `{ percent, bytesProcessed, etaMs, elapsedMs }` (Phase 11b). `etaMs` is `-1`
+  until estimable. Dart's `CompressionProgress.fromEvent` also still accepts a
+  **bare `double`** (the pre-1.8.0 wire), so a Dart upgrade never hard-breaks
+  against an older native; `onProgressUpdated` extracts `percent`.
 - **EventChannel `compression/batch-stream`** — batch events: maps tagged
-  `type: "progress"` (`index`, `percent`, `overallPercent`) or `type: "result"`
+  `type: "progress"` (`index`, `percent`, `overallPercent`, plus the same
+  `bytesProcessed` / `etaMs` / `elapsedMs`) or `type: "result"`
   (an `index` plus a result map).
 
 **Result maps** (what the natives send back; parsed by `_resultFromMap` in
@@ -143,7 +147,9 @@ encodes/decodes the channel contract.
   (`compressVideo`, `compressVideos`, `getMediaInfo`, `getVideoThumbnail`,
   `getVideoThumbnails`, `getCompressionEstimate`, `isCompressing`, `clearCache`,
   `cancelCompression`); the lazy broadcast streams
-  `onProgressUpdated` (`Stream<double>`) and `onBatchUpdate` (`Stream<BatchEvent>`);
+  `onProgressUpdated` (`Stream<double>`), `onProgressDetail`
+  (`Stream<CompressionProgress>`, both mapped from one shared `compression/stream`
+  broadcast) and `onBatchUpdate` (`Stream<BatchEvent>`);
   `_resultFromMap` (the decoder shared by the batch return value and
   `BatchItemCompleted` events); the wire decoders `_videoFormatFromWire` /
   `_failureTypeFromWire`; the failure→exception mappers `_exceptionFor` (compress)
@@ -152,6 +158,10 @@ encodes/decodes the channel contract.
   `Result` type and its `OnSuccess` / `OnFailure` / `OnCancelled` subtypes (the
   `OnSuccess` carries `usedFormat`, `targetSizeMet`, and `passesUsed`), plus
   the `CompressionFailureType` enum.
+- **[`src/compression_progress.dart`](lib/src/compression_progress.dart)** — the
+  `CompressionProgress` model (`percent` + `bytesProcessed` / `etaMs` /
+  `elapsedMs`) behind `onProgressDetail`; its `fromEvent` accepts both the map
+  wire and a bare-`double` percent (back-compat).
 - **[`src/batch_event.dart`](lib/src/batch_event.dart)** — `BatchEvent` with
   `BatchProgress` and `BatchItemCompleted`.
 - **[`src/media_info.dart`](lib/src/media_info.dart)** — `MediaInfo` + `fromMap`;

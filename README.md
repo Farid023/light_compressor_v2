@@ -303,7 +303,22 @@ StreamBuilder<double>(
 );
 ```
 
-Batch — per-video and overall progress, plus a completion event per item:
+For estimated time remaining and the output size as it grows, listen to
+`onProgressDetail` instead (a `Stream<CompressionProgress>`):
+
+```dart
+compressor.onProgressDetail.listen((CompressionProgress p) {
+  final eta = p.etaMs != null ? '~${(p.etaMs! / 1000).ceil()}s left' : '—';
+  print('${p.percent.toStringAsFixed(0)}%  $eta  ${p.bytesProcessed ?? 0} bytes');
+});
+```
+
+`etaMs` is a rough projection (an indicator, not a guarantee) and is `null`
+until it becomes estimable; `bytesProcessed` is the encoded output written so
+far. `onProgressUpdated` stays available for just the percentage.
+
+Batch — per-video and overall progress, plus a completion event per item.
+`BatchProgress` carries the same `etaMs` / `elapsedMs` / `bytesProcessed` fields:
 
 ```dart
 compressor.onBatchUpdate.listen((BatchEvent event) {

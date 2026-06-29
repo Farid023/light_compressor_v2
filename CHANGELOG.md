@@ -4,6 +4,14 @@
 
 ### New
 
+- **Progress detail (ETA + bytes)** — a new **`onProgressDetail`**
+  (`Stream<CompressionProgress>`) reports, alongside the percentage, the
+  estimated time remaining (`etaMs`), elapsed time (`elapsedMs`) and encoded
+  output bytes written so far (`bytesProcessed`) for the single-video flow. The
+  same fields are now also on **`BatchProgress`** (via `onBatchUpdate`). The
+  existing **`onProgressUpdated`** (`Stream<double>`) is unchanged — it stays the
+  simplest option for just the percentage. `etaMs` is a rough projection (an
+  indicator, not a guarantee) and is `null` until it becomes estimable.
 - **Configurable batch concurrency** — pass `maxConcurrent` to `compressVideos`
   to cap how many videos transcode at the same time. Leaving it unset keeps each
   platform's historic default (Android compresses up to 2 at once; Apple starts
