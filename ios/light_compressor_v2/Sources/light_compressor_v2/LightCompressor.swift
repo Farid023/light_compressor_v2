@@ -129,6 +129,9 @@ public struct LightCompressor {
             public let brightness: Double?
             public let contrast: Double?
             public let saturation: Double?
+            // Phase 11a: max videos transcoded at once in a batch. nil starts
+            // them all (the historic behaviour); a set value (>= 1) throttles.
+            public let maxConcurrent: Int?
 
             public init(
                 quality: VideoQuality = .medium,
@@ -148,7 +151,8 @@ public struct LightCompressor {
                 rotationDegrees: Int? = nil,
                 brightness: Double? = nil,
                 contrast: Double? = nil,
-                saturation: Double? = nil
+                saturation: Double? = nil,
+                maxConcurrent: Int? = nil
             ) {
                 self.quality = quality
                 self.isMinBitrateCheckEnabled = isMinBitrateCheckEnabled
@@ -168,6 +172,7 @@ public struct LightCompressor {
                 self.brightness = brightness
                 self.contrast = contrast
                 self.saturation = saturation
+                self.maxConcurrent = maxConcurrent
             }
         }
 
@@ -448,7 +453,18 @@ public struct LightCompressor {
         let compressionOperation = Compression()
         guard !videos.isEmpty else { return compressionOperation }
 
-        for (index, video) in videos.enumerated() {
+        // Phase 11a: cap how many videos transcode at once. nil keeps the
+        // historic behaviour (start them all); a set value (>= 1) throttles.
+        // All scheduler state below is mutated only on `scheduler` (serial).
+        let count = videos.count
+        let limit = max(1, videos.first?.configuration.maxConcurrent ?? count)
+        let scheduler = DispatchQueue(label: "com.lightcompressor.batchScheduler")
+        var nextIndex = 0
+        var inFlight = 0
+
+        // Transcodes one video (the whole pass-1/pass-2 flow) and calls `onDone`
+        // exactly once when it reaches a terminal state, freeing its slot.
+        func startVideo(_ index: Int, _ video: Video, onDone: @escaping () -> Void) {
             let source        = video.source
             let destination   = video.destination
             let configuration = video.configuration
@@ -460,7 +476,8 @@ public struct LightCompressor {
             guard let videoTrack = videoAsset.tracks(withMediaType: .video).first else {
                 completion(.onFailure(index, CompressionError(
                     title: "Cannot find video track", type: .unsupported)))
-                continue
+                onDone()
+                return
             }
 
             let bitrate = videoTrack.estimatedDataRate
@@ -469,7 +486,8 @@ public struct LightCompressor {
                 completion(.onFailure(index, CompressionError(
                     title: "Bitrate is too low for compression. Set isMinBitrateCheckEnabled to false to skip this check."
                 )))
-                continue
+                onDone()
+                return
             }
 
             let videoSize = videoTrack.naturalSize
@@ -549,7 +567,9 @@ public struct LightCompressor {
             let targetBytes = configuration.targetSizeBytes ?? 0
             let floor = min(Double(Self.MIN_BITRATE), Double(bitrate))
 
-            // Reports the terminal result for this video.
+            // Reports the terminal result for this video and frees its slot.
+            // The single funnel for the encode path; validation failures above
+            // call onDone() directly (they precede the values finish() needs).
             func finish(_ outcome: PassOutcome, passesUsed: Int) {
                 switch outcome {
                 case .cancelled:
@@ -561,6 +581,7 @@ public struct LightCompressor {
                         index, url, durationInSeconds, resolvedFormat,
                         targetSizeMet, passesUsed))
                 }
+                onDone()
             }
 
             // Pass 1.
@@ -616,7 +637,7 @@ public struct LightCompressor {
                     switch outcome2 {
                     case .cancelled:
                         try? FileManager.default.removeItem(at: tempDest)
-                        completion(.onCancelled)
+                        finish(.cancelled, passesUsed: 2)
                     case .failure:
                         // Pass 2 failed — keep the valid pass-1 output.
                         try? FileManager.default.removeItem(at: tempDest)
@@ -629,6 +650,27 @@ public struct LightCompressor {
                 }
             }
         }
+
+        // Pump: start up to `limit` videos now; each finishing video releases
+        // its slot and starts the next queued one. Runs entirely on `scheduler`
+        // (off the caller thread), so this method returns the handle at once.
+        // Every video is started even after a cancel, so each one still reports
+        // a terminal result (a cancelled pass returns quickly) — the batch
+        // caller relies on exactly one reply per index to know it is done.
+        func startNext() {
+            while inFlight < limit && nextIndex < count {
+                let index = nextIndex
+                nextIndex += 1
+                inFlight += 1
+                startVideo(index, videos[index]) {
+                    scheduler.async {
+                        inFlight -= 1
+                        startNext()
+                    }
+                }
+            }
+        }
+        scheduler.async { startNext() }
 
         return compressionOperation
     }

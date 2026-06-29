@@ -237,7 +237,8 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
             rotationDegrees: edit?["rotationDegrees"] as? Int,
             brightness: edit?["brightness"] as? Double,
             contrast: edit?["contrast"] as? Double,
-            saturation: edit?["saturation"] as? Double)
+            saturation: edit?["saturation"] as? Double,
+            maxConcurrent: args["maxConcurrent"] as? Int)
 
         let count = paths.count
         var videos: [LightCompressor.Video] = []
