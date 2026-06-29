@@ -549,7 +549,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         )
     }
 
-    /** Optional native edits (Phase 9): a trim range + a quarter-turn rotation. */
+    /** Optional native edits: a trim range + a quarter-turn rotation. */
     private data class EditParams(
         val trimStartMs: Long?,
         val trimEndMs: Long?,

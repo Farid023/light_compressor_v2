@@ -51,7 +51,7 @@ plugin:
   `getVideoThumbnail`, `getVideoThumbnails`, `getCompressionEstimate`,
   `isCompressing`.
 - **EventChannel `compression/stream`** — single-video progress: a map
-  `{ percent, bytesProcessed, etaMs, elapsedMs }` (Phase 11b). `etaMs` is `-1`
+  `{ percent, bytesProcessed, etaMs, elapsedMs }`. `etaMs` is `-1`
   until estimable. Dart's `CompressionProgress.fromEvent` also still accepts a
   **bare `double`** (the pre-1.8.0 wire), so a Dart upgrade never hard-breaks
   against an older native; `onProgressUpdated` extracts `percent`.
@@ -194,9 +194,9 @@ encodes/decodes the channel contract.
 
 - **Argument-map keys are the contract.** The keys passed to `invokeMethod`
   (`videoName`, `isMinBitrateCheckEnabled`, `saveAt`, `videoFormat`, `background`,
-  the Phase 8 keys `targetSizeBytes` / `videoFps` / `audioBitrate` /
-  `audioSampleRate` / `twoPass`, the Phase 9 nested `edit` map
-  (`trimStartMs` / `trimEndMs` / `rotationDegrees`), the Phase 11 batch-only
+  the output-control keys `targetSizeBytes` / `videoFps` / `audioBitrate` /
+  `audioSampleRate` / `twoPass`, the nested `edit` map
+  (`trimStartMs` / `trimEndMs` / `rotationDegrees`), the batch-only
   `maxConcurrent`, and the opt-in `debugLogging`, …) must match the keys the
   natives read via
   `call.argument(...)` / `args[...]`. Renaming a key here means renaming it in all
@@ -245,16 +245,16 @@ a vendored fork of the LightCompressor library:
   `VideoQuality` and `VideoFormat` enums.
 - [`compressor/Compressor.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/compressor/Compressor.kt)
   — the actual decode→GL→encode→`MediaMuxer` pipeline; the `@Volatile isRunning`
-  flag lives here. Also home to the Phase 8 logic: the target-size bitrate solver
+  flag lives here. Also home to the target-size bitrate solver
   (`MIN_BITRATE` floor), frame-dropping for `videoFps`, the AAC audio re-encode
   (`transcodeAudioToBuffer` + muxer track ordering), and the two-pass corrective
   loop (`TWO_PASS_TOLERANCE`, a fresh `MediaExtractor` per pass, temp-file replace).
-  Phase 9 adds trim — `seekTo(trimStartUs)`, drop-before / EOS-after the range in
+  Native editing: trim — `seekTo(trimStartUs)`, drop-before / EOS-after the range in
   the decode loop, PTS rebased to 0 (video + both audio paths) — rotate, as a
   `setOrientationHint` applied *after* the source-rotation normalization — and
   colour, baked by the `TextureRenderer` fragment shader (identity uniforms when
   no colour, so it stays free).
-  **Large-file limits (Phase 11d review):** `transcodeAudioToBuffer` holds the
+  **Large-file limits (review):** `transcodeAudioToBuffer` holds the
   whole encoded audio track in memory, so the AAC re-encode path's memory scales
   with audio *duration* (the no-`AudioConfig` passthrough copy doesn't buffer) —
   a streaming rewrite is a known follow-up. And `MediaMuxer`'s MP4 writer uses
@@ -319,17 +319,17 @@ to CocoaPods. Sources sit under `…/Sources/light_compressor_v2/`:
   silent H.264 fallback, progress + completion callbacks, the typed `MediaError`,
   the static `mediaInfo` / `thumbnail` / `clearCache` helpers, and the
   `estimate(...)` behind `getCompressionEstimate`. The `cancel` flag rides on the
-  returned `Compression` handle. Phase 8 adds the target-size solver, frame-dropping
+  returned `Compression` handle. It also has the target-size solver, frame-dropping
   for `videoFps`, the AAC audio re-encode, and the two-pass corrective loop — the
   transcode body is factored into a re-callable `encodePass(...)` (each pass streams
   0..<100, so the terminal signal is the result, never a mid-stream 100) driven from
-  the pass-1 completion. Phase 9 adds trim — each reader's `timeRange` + a
+  the pass-1 completion. Native editing: trim — each reader's `timeRange` + a
   `startSession(atSourceTime:)` at the range start (output rebased to 0; reported
   duration = trimmed) — rotate, by composing the quarter-turn onto
   `videoWriterInput.transform` — and colour, by reading through an
   `AVAssetReaderVideoCompositionOutput` driven by a `CIColorControls` filter
-  (only when a colour knob is set; otherwise the cheap track output). Phase 11a
-  adds **batch throttling**: `compressVideo(videos:)` no longer starts every
+  (only when a colour knob is set; otherwise the cheap track output).
+  **Batch throttling:** `compressVideo(videos:)` no longer starts every
   video at once — the per-video work moved into a nested `startVideo(...)` driven
   by an async pump on a private serial scheduler that keeps at most
   `maxConcurrent` (`?? count`, so unset = start-all) in flight, each finishing
@@ -375,16 +375,16 @@ The demo app is also the only place the native pipeline runs end-to-end.
     — H.264 / H.265 selection and the automatic fallback (`usedFormat`).
   - [`integration_test/preflight_test.dart`](example/integration_test/preflight_test.dart)
     — `getCompressionEstimate`, batch `getVideoThumbnails`, and `isCompressing`
-    (Phase 7 introspection).
+    (the introspection methods).
   - [`integration_test/target_size_test.dart`](example/integration_test/target_size_test.dart),
     [`fps_test.dart`](example/integration_test/fps_test.dart),
     [`audio_test.dart`](example/integration_test/audio_test.dart), and
     [`two_pass_test.dart`](example/integration_test/two_pass_test.dart) — the
-    Phase 8 options (target size, frame-rate downsample, AAC audio re-encode,
+    output-control options (target size, frame-rate downsample, AAC audio re-encode,
     two-pass). The corrective second pass only runs when pass 1 overshoots, so a
     highly compressible clip stays single-pass (`passesUsed == 1`).
   - [`integration_test/edit_test.dart`](example/integration_test/edit_test.dart)
-    — the Phase 9 editing: trim yields an output of ~the requested length (and
+    — the native editing: trim yields an output of ~the requested length (and
     shorter than the source), a 90° rotate swaps the displayed dims vs an
     unrotated baseline (source-agnostic), and `saturation: 0` desaturates the
     output toward grayscale (decoded via `dart:ui`).

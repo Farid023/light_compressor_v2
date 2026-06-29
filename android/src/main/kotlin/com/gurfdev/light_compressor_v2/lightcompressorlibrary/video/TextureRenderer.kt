@@ -41,7 +41,7 @@ uniform float uSaturation;
 void main() {
   vec4 c = texture2D(sTexture, vTextureCoord);
   vec3 rgb = c.rgb;
-  // Color adjust (Phase 9c), CIColorControls-style order: saturation, then
+  // Color adjust, CIColorControls-style order: saturation, then
   // brightness (additive), then contrast (around 0.5 mid-grey). Identity at
   // saturation=1, brightness=0, contrast=1, so the no-color path is a no-op.
   float luma = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
@@ -158,7 +158,7 @@ void main() {
             throw RuntimeException("Could not get attrib location for uSTMatrix")
         }
 
-        // Color-adjustment uniforms (Phase 9c). Not fatal if a driver optimizes
+        // Color-adjustment uniforms. Not fatal if a driver optimizes
         // one out — drawFrame guards on a valid (>= 0) location.
         muBrightnessHandle = GLES20.glGetUniformLocation(mProgram, "uBrightness")
         muContrastHandle = GLES20.glGetUniformLocation(mProgram, "uContrast")

@@ -48,7 +48,7 @@ interface CompressionProgressListener {
 }
 
 /**
- * A progress sample for one video (Phase 11b). [percent] is `0..100`;
+ * A progress sample for one video. [percent] is `0..100`;
  * [bytesProcessed] is encoded video output bytes written so far; [etaMs] is the
  * estimated time remaining in ms (`-1` while not yet estimable); [elapsedMs] is
  * time since this encode started.

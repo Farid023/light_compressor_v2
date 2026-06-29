@@ -49,7 +49,7 @@ public class Compression {
     public var cancel = false
 }
 
-/// A progress sample for one video (Phase 11b). `percent` is `0..100`;
+/// A progress sample for one video. `percent` is `0..100`;
 /// `bytesProcessed` is encoded output bytes written so far; `etaMs` is the
 /// estimated time remaining in ms (`-1` while not yet estimable); `elapsedMs`
 /// is time since this encode pass started.
@@ -140,10 +140,10 @@ public struct LightCompressor {
             public let brightness: Double?
             public let contrast: Double?
             public let saturation: Double?
-            // Phase 11a: max videos transcoded at once in a batch. nil starts
+            // Max videos transcoded at once in a batch. nil starts
             // them all (the historic behaviour); a set value (>= 1) throttles.
             public let maxConcurrent: Int?
-            // Phase 11c: opt-in structured debug logging (paths reduced to base
+            // Opt-in structured debug logging (paths reduced to base
             // names). Off by default.
             public let debugLogging: Bool
 
@@ -213,7 +213,7 @@ public struct LightCompressor {
     private static let MIN_HEIGHT  = 640.0
     private static let MIN_WIDTH   = 360.0
 
-    /// Phase 8d: a two-pass run triggers a corrective second pass only when the
+    /// A two-pass run triggers a corrective second pass only when the
     /// first pass overshoots the target by more than this fraction.
     private static let TWO_PASS_TOLERANCE = 0.10
 
@@ -267,7 +267,7 @@ public struct LightCompressor {
         if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
            let size = (attrs[.size] as? NSNumber)?.int64Value {
             // int64Value (not intValue, which is Int32) so files >2 GB report
-            // their true size rather than a truncated/wrapped value (Phase 11d).
+            // their true size rather than a truncated/wrapped value.
             info["fileSize"] = size
         }
         if let mimeType = mimeType(for: url) {
@@ -472,7 +472,7 @@ public struct LightCompressor {
         let compressionOperation = Compression()
         guard !videos.isEmpty else { return compressionOperation }
 
-        // Phase 11a: cap how many videos transcode at once. nil keeps the
+        // Cap how many videos transcode at once. nil keeps the
         // historic behaviour (start them all); a set value (>= 1) throttles.
         // All scheduler state below is mutated only on `scheduler` (serial).
         let count = videos.count
@@ -517,7 +517,7 @@ public struct LightCompressor {
                     keepOriginalResolution: configuration.keepOriginalResolution)
                 : (Int(configuration.videoSize!.width), Int(configuration.videoSize!.height))
 
-            // Native editing (Phase 9a): resolve the kept time range. The output
+            // Native editing: resolve the kept time range. The output
             // timeline is rebased to 0 (startSession at trimRange.start), so the
             // reported duration, the size solver and the progress denominator all
             // use the trimmed length. trimRange stays nil when no trim is asked.
@@ -577,7 +577,7 @@ public struct LightCompressor {
             let resolvedFormat: VideoFormat =
                 (configuration.videoFormat == .h265 && Self.isHEVCEncodingSupported()) ? .h265 : .h264
 
-            // Phase 8d: two-pass. Enabled only when requested AND a target size
+            // Two-pass. Enabled only when requested AND a target size
             // was set AND it is reachable (a floor-bound pass 1 can't be improved
             // by a lower bitrate). Pass 1 encodes at the solved bitrate; if it
             // overshoots, pass 2 re-encodes at a corrected (lower) bitrate.
@@ -586,7 +586,7 @@ public struct LightCompressor {
             let targetBytes = configuration.targetSizeBytes ?? 0
             let floor = min(Double(Self.MIN_BITRATE), Double(bitrate))
 
-            // Phase 11c: log the resolved encode plan (paths reduced to base
+            // Log the resolved encode plan (paths reduced to base
             // names), gated on the opt-in flag.
             if configuration.debugLogging {
                 NSLog("[LightCompressor] plan #\(index) out=\(destination.lastPathComponent) "
@@ -718,7 +718,7 @@ public struct LightCompressor {
         return compressionOperation
     }
 
-    // MARK: - Two-pass support (Phase 8d)
+    // MARK: - Two-pass support
 
     /// The outcome of a single transcode pass.
     private enum PassOutcome {
@@ -733,7 +733,7 @@ public struct LightCompressor {
     }
 
     /// Runs one full transcode pass at [bitrate], writing to [destination], and
-    /// reports the outcome via [onPassComplete]. Phase 8d calls this once, or a
+    /// reports the outcome via [onPassComplete]. It is called once, or a
     /// second time at a corrected bitrate when the first pass overshot the target.
     /// Progress is reported as 0..<100 (never the terminal 100) so a two-pass run
     /// does not signal "done" between passes; completion is the `onPassComplete`
@@ -759,7 +759,7 @@ public struct LightCompressor {
         var frameCount = 0
         let progress = Progress(totalUnitCount: Int64(totalFrames))
         var nextEmitSeconds = 0.0
-        // Phase 11b: anchor elapsed time for the ETA projection. Output bytes
+        // Anchor elapsed time for the ETA projection. Output bytes
         // are read from the growing destination file at each tick.
         let passStart = Date()
         // Cap progress just below the total so fractionCompleted never reaches
@@ -797,7 +797,7 @@ public struct LightCompressor {
             kCVPixelBufferPixelFormatTypeKey as String:
                 Int(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) as AnyObject
         ]
-        // Color adjust (Phase 9c): when any color knob is set, read through a
+        // Color adjust: when any color knob is set, read through a
         // video composition that applies CIColorControls; otherwise keep the
         // cheap track output. Identity = brightness 0, contrast 1, saturation 1.
         let videoReaderOutput: AVAssetReaderOutput
