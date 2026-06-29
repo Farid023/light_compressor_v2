@@ -147,6 +147,21 @@ for (final (int i, Result r) in results.indexed) {
 }
 ```
 
+By default Android compresses up to two videos at once and Apple starts them
+all. Pass `maxConcurrent` to cap that — e.g. `maxConcurrent: 1` for strictly
+sequential compression, which lowers peak memory and device heat:
+
+```dart
+await compressor.compressVideos(
+  paths: paths,
+  videoNames: names,
+  videoQuality: VideoQuality.medium,
+  maxConcurrent: 1, // one video at a time
+  android: AndroidConfig(saveAt: SaveAt.Movies),
+  ios: IOSConfig(saveInGallery: false),
+);
+```
+
 ### Run in the background
 
 Pass a `BackgroundConfig` to keep a compression running while the app is
@@ -434,6 +449,7 @@ try {
 | `background` | `BackgroundConfig?` | | `null` | Keep the whole batch running while backgrounded. See [`BackgroundConfig`](#backgroundconfig). |
 | `audio` | `AudioConfig?` | | `null` | Re-encode the audio track as AAC. See [`AudioConfig`](#audioconfig). |
 | `edit` | `VideoEdit?` | | `null` | Trim and/or rotate every video. See [`VideoEdit`](#videoedit). |
+| `maxConcurrent` | `int?` | | `null` | Cap how many videos transcode at once (`>= 1`). Unset keeps the platform default (Android 2; Apple starts all). No effect on a single video. |
 
 ### `getCompressionEstimate()` → `Future<CompressionEstimate>`
 

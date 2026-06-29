@@ -92,6 +92,13 @@ Dart `_failureTypeFromWire` / `_exceptionFor`. **Change one, change all four.**
   `paths`, and one video failing must never abort the others (its slot becomes an
   `OnFailure`). Verified by the *batch resilience* group in
   [`example/integration_test/plugin_integration_test.dart`](example/integration_test/plugin_integration_test.dart).
+- **Batch concurrency is capped, never zero.** A batch transcodes at most
+  `maxConcurrent` videos at once (`>= 1`); unset keeps each platform's historic
+  default (Android `Semaphore(2)`; Apple started them all). Whatever the cap,
+  **every** input index must still reach exactly one terminal reply — so the cap
+  throttles *starts*, it must never *skip* a video (Apple keeps starting queued
+  videos even after a cancel, so each one still reports). Don't let throttling
+  break the "same order / every slot replies" guarantee above.
 - **HEVC fallback is silent.** `videoFormat: h265` falls back to H.264 when the
   device has no hardware HEVC encoder; the caller learns the truth only from
   `OnSuccess.usedFormat`. Never *fail* just because HEVC is unavailable.
@@ -178,8 +185,9 @@ encodes/decodes the channel contract.
 - **Argument-map keys are the contract.** The keys passed to `invokeMethod`
   (`videoName`, `isMinBitrateCheckEnabled`, `saveAt`, `videoFormat`, `background`,
   the Phase 8 keys `targetSizeBytes` / `videoFps` / `audioBitrate` /
-  `audioSampleRate` / `twoPass`, and the Phase 9 nested `edit` map
-  (`trimStartMs` / `trimEndMs` / `rotationDegrees`), …) must match the keys the
+  `audioSampleRate` / `twoPass`, the Phase 9 nested `edit` map
+  (`trimStartMs` / `trimEndMs` / `rotationDegrees`), and the Phase 11 batch-only
+  `maxConcurrent`, …) must match the keys the
   natives read via
   `call.argument(...)` / `args[...]`. Renaming a key here means renaming it in all
   three natives.
@@ -218,7 +226,8 @@ a vendored fork of the LightCompressor library:
 - [`VideoCompressor.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/VideoCompressor.kt)
   — entry `object` (a `MainScope` coroutine scope). `start()` validates, then
   `doVideoCompression()` launches one `Dispatchers.IO` coroutine per URI, **bounded
-  by `Semaphore(MAX_CONCURRENT_COMPRESSIONS = 2)`** — running a whole batch in
+  by a `Semaphore` sized from `Configuration.maxConcurrent` (coerced `>= 1`), or
+  `MAX_CONCURRENT_COMPRESSIONS = 2` when unset** — running a whole batch in
   parallel oversubscribes the hardware codecs and surfaces as "Surface frame wait
   timed out". `cancel()` flips `isRunning = false` and cancels all jobs.
   `classifyThrowable` maps `SecurityException`→`PERMISSION`,
@@ -301,7 +310,13 @@ to CocoaPods. Sources sit under `…/Sources/light_compressor_v2/`:
   duration = trimmed) — rotate, by composing the quarter-turn onto
   `videoWriterInput.transform` — and colour, by reading through an
   `AVAssetReaderVideoCompositionOutput` driven by a `CIColorControls` filter
-  (only when a colour knob is set; otherwise the cheap track output).
+  (only when a colour knob is set; otherwise the cheap track output). Phase 11a
+  adds **batch throttling**: `compressVideo(videos:)` no longer starts every
+  video at once — the per-video work moved into a nested `startVideo(...)` driven
+  by an async pump on a private serial scheduler that keeps at most
+  `maxConcurrent` (`?? count`, so unset = start-all) in flight, each finishing
+  video freeing its slot via a single `onDone` funnel; the method still returns
+  the `Compression` handle immediately.
 - **`extensions/Encodable.swift`** — the `toJson` used to encode the
   single-compress reply.
 

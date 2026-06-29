@@ -1,5 +1,21 @@
 # Changelog
 
+# 1.8.0
+
+### New
+
+- **Configurable batch concurrency** — pass `maxConcurrent` to `compressVideos`
+  to cap how many videos transcode at the same time. Leaving it unset keeps each
+  platform's historic default (Android compresses up to 2 at once; Apple starts
+  them all); setting it (`>= 1`) compresses strictly one-at-a-time (`1`) or trades
+  memory and device heat for throughput at higher values. Honoured on Android,
+  iOS and macOS; has no effect on a single `compressVideo`.
+- Example app gains a **"Max concurrent"** (Auto / 1 / 2 / 3) selector in the
+  batch flow.
+
+All additions are additive and fully backward compatible — existing APIs are
+unchanged.
+
 # 1.7.0
 
 ### New
