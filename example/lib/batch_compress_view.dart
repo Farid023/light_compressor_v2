@@ -38,6 +38,7 @@ class _BatchCompressViewState extends State<BatchCompressView>
   bool _running = false;
   bool _runInBackground = false;
   VideoFormat _videoFormat = VideoFormat.h264;
+  int? _maxConcurrent;
   StreamSubscription<BatchEvent>? _subscription;
 
   @override
@@ -99,6 +100,7 @@ class _BatchCompressViewState extends State<BatchCompressView>
         android: AndroidConfig(isSharedStorage: true, saveAt: SaveAt.Movies),
         ios: IOSConfig(saveInGallery: false),
         videoFormat: _videoFormat,
+        maxConcurrent: _maxConcurrent,
         background: _runInBackground ? const BackgroundConfig() : null,
       );
     } catch (e) {
@@ -170,6 +172,30 @@ class _BatchCompressViewState extends State<BatchCompressView>
                       () => _videoFormat =
                           value ? VideoFormat.h265 : VideoFormat.h264,
                     ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: <Widget>[
+                const Text('Max concurrent', style: TextStyle(fontSize: 15)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Wrap(
+                    spacing: 8,
+                    children: <Widget>[
+                      for (final int? value in <int?>[null, 1, 2, 3])
+                        ChoiceChip(
+                          label: Text(value == null ? 'Auto' : '$value'),
+                          selected: _maxConcurrent == value,
+                          onSelected: _running
+                              ? null
+                              : (_) => setState(() => _maxConcurrent = value),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
           if (_running) ...[
             const SizedBox(height: 16),

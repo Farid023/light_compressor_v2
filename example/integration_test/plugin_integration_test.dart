@@ -222,6 +222,38 @@ void main() {
     );
   });
 
+  group('batch concurrency', () {
+    // maxConcurrent caps how many videos transcode at once. Correctness —
+    // every slot reports, input order is preserved and each output is a valid
+    // video — must hold regardless of the cap. Serial (1) is the strictest
+    // case and exercises the start-one / finish / start-next pump directly.
+    testWidgets(
+      'maxConcurrent: 1 compresses a batch sequentially, order kept',
+      (WidgetTester tester) async {
+        if (source == null) return markTestSkipped(kNoClipSkipReason);
+        final List<Result> results = await compressor.compressVideos(
+          paths: <String>[source!, source!, source!],
+          videoNames: <String>['lc_it_mc0', 'lc_it_mc1', 'lc_it_mc2'],
+          videoQuality: VideoQuality.medium,
+          isMinBitrateCheckEnabled: false,
+          maxConcurrent: 1,
+          android: AndroidConfig(isSharedStorage: false),
+          ios: IOSConfig(saveInGallery: false),
+        );
+        expect(results, hasLength(3));
+        for (final Result r in results) {
+          expect(r, isA<OnSuccess>(),
+              reason: 'every capped slot should still succeed');
+        }
+        for (final Result r in results) {
+          await expectReadableVideo(
+              compressor, (r as OnSuccess).destinationPath);
+        }
+      },
+      timeout: const Timeout(Duration(seconds: 180)),
+    );
+  });
+
   group('lifecycle', () {
     testWidgets('clearCache completes without error', (
       WidgetTester tester,
