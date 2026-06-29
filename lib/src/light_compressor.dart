@@ -141,6 +141,10 @@ class LightCompressor {
   /// * [edit] — Optional native edits applied during compression: trim to a
   ///   time range and/or rotate by a quarter-turn; see [VideoEdit]. Defaults to
   ///   `null` (no edits).
+  /// * [debugLogging] — When `true`, the native side emits structured debug log
+  ///   lines for this compression (the resolved encode plan and the outcome),
+  ///   with file paths reduced to their base names. Off by default. Intended for
+  ///   diagnosing a single run, not for production.
   ///
   /// Returns a [Result] which can be:
   /// * [OnSuccess] containing the output destination file path and statistics.
@@ -164,6 +168,7 @@ class LightCompressor {
     BackgroundConfig? background,
     AudioConfig? audio,
     VideoEdit? edit,
+    bool debugLogging = false,
   }) async {
     final Map<String, dynamic> response = jsonDecode(
       await _channel
@@ -190,6 +195,7 @@ class LightCompressor {
             'videoFormat': videoFormat.name,
             'background': background?.toMap(),
             'edit': edit?.toMap(),
+            'debugLogging': debugLogging,
           }),
     );
 
@@ -285,6 +291,10 @@ class LightCompressor {
   /// Apple starts them all). Setting it (must be `>= 1`) is honoured on every
   /// platform — use `1` for strictly sequential compression, or a higher value
   /// to trade memory/heat for throughput. Has no effect on a single video.
+  ///
+  /// [debugLogging] turns on native structured debug logging for every video in
+  /// the batch (paths reduced to base names); see [compressVideo]. Off by
+  /// default.
   Future<List<Result>> compressVideos({
     required List<String> paths,
     required List<String> videoNames,
@@ -305,6 +315,7 @@ class LightCompressor {
     AudioConfig? audio,
     VideoEdit? edit,
     int? maxConcurrent,
+    bool debugLogging = false,
   }) async {
     assert(
       paths.length == videoNames.length,
@@ -352,6 +363,7 @@ class LightCompressor {
           'background': background?.toMap(),
           'edit': edit?.toMap(),
           'maxConcurrent': maxConcurrent,
+          'debugLogging': debugLogging,
         });
 
     if (response == null) {
