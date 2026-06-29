@@ -44,6 +44,11 @@ data class Configuration(
     var trimStartMs: Long? = null,
     var trimEndMs: Long? = null,
     var rotationDegrees: Int? = null,
+    // Color adjust (Phase 9c). brightness -1..1 (0 = none), contrast/saturation
+    // 0..2 (1 = none); null leaves the channel unchanged. Baked by the GL shader.
+    var brightness: Double? = null,
+    var contrast: Double? = null,
+    var saturation: Double? = null,
 ) {
     @Deprecated("Use VideoResizer to override the output video dimensions.", ReplaceWith("Configuration(quality, isMinBitrateCheckEnabled, videoBitrateInMbps, disableAudio, resizer = if (keepOriginalResolution) null else VideoResizer.auto, videoNames)"))
     constructor(

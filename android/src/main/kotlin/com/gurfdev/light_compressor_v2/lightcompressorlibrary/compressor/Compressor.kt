@@ -232,6 +232,12 @@ object Compressor {
             if (configuration.trimEndMs != null) trimEndUs else Long.MAX_VALUE
         val outDurationUs = (trimEndUs - trimStartUs).coerceAtLeast(1L)
 
+        // Native editing (Phase 9c): color knobs baked by the GL shader. Identity
+        // defaults (brightness 0, contrast 1, saturation 1) mean "no change".
+        val colorBrightness = configuration.brightness?.toFloat() ?: 0f
+        val colorContrast = configuration.contrast?.toFloat() ?: 1f
+        val colorSaturation = configuration.saturation?.toFloat() ?: 1f
+
         // Check for a min video bitrate before compression
         // Note: this is an experimental value
         if (configuration.isMinBitrateCheckEnabled && bitrate > 0 && bitrate <= MIN_BITRATE)
@@ -334,6 +340,7 @@ object Compressor {
             configuration.disableAudio, extractor, listener, outDurationUs, rotation,
             outputMime, targetSizeMet, configuration.videoFps, audioTranscode,
             trimStartUs, loopTrimEndUs,
+            colorBrightness, colorContrast, colorSaturation,
         )
 
         if (twoPassEnabled && result.success && isRunning &&
@@ -365,6 +372,7 @@ object Compressor {
                         outDurationUs, rotation, outputMime, targetSizeMet,
                         configuration.videoFps, audioTranscode,
                         trimStartUs, loopTrimEndUs,
+                        colorBrightness, colorContrast, colorSaturation,
                     )
                     passesUsed = 2
                     if (pass2.success) {
@@ -421,6 +429,9 @@ object Compressor {
         audioTranscode: AudioTranscodeResult?,
         trimStartUs: Long,
         trimEndUs: Long,
+        brightness: Float,
+        contrast: Float,
+        saturation: Float,
     ): Result {
 
         if (newWidth != 0 && newHeight != 0) {
@@ -526,7 +537,7 @@ object Compressor {
                     //Move to executing state
                     encoder.start()
 
-                    outputSurface = OutputSurface()
+                    outputSurface = OutputSurface(brightness, contrast, saturation)
 
                     decoder = prepareDecoder(inputFormat, outputSurface)
 

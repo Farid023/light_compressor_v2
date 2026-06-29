@@ -237,6 +237,9 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                 trimStartMs = edit?.trimStartMs,
                 trimEndMs = edit?.trimEndMs,
                 rotationDegrees = edit?.rotationDegrees,
+                brightness = edit?.brightness,
+                contrast = edit?.contrast,
+                saturation = edit?.saturation,
             ),
             listener = object : CompressionListener {
                 override fun onStart(index: Int) {}
@@ -392,6 +395,9 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                 trimStartMs = edit?.trimStartMs,
                 trimEndMs = edit?.trimEndMs,
                 rotationDegrees = edit?.rotationDegrees,
+                brightness = edit?.brightness,
+                contrast = edit?.contrast,
+                saturation = edit?.saturation,
             ),
             listener = object : CompressionListener {
                 override fun onStart(index: Int) {}
@@ -532,6 +538,9 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         val trimStartMs: Long?,
         val trimEndMs: Long?,
         val rotationDegrees: Int?,
+        val brightness: Double?,
+        val contrast: Double?,
+        val saturation: Double?,
     )
 
     /**
@@ -544,6 +553,9 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
             trimStartMs = (map["trimStartMs"] as? Number)?.toLong(),
             trimEndMs = (map["trimEndMs"] as? Number)?.toLong(),
             rotationDegrees = (map["rotationDegrees"] as? Number)?.toInt(),
+            brightness = (map["brightness"] as? Number)?.toDouble(),
+            contrast = (map["contrast"] as? Number)?.toDouble(),
+            saturation = (map["saturation"] as? Number)?.toDouble(),
         )
     }
 
