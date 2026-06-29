@@ -14,6 +14,7 @@ class OnSuccess implements Result {
     required this.ratio,
     this.usedFormat = VideoFormat.h264,
     this.targetSizeMet = true,
+    this.passesUsed = 1,
   });
 
   /// The absolute path to the successfully compressed video file.
@@ -47,6 +48,14 @@ class OnSuccess implements Result {
   /// output resolution and the compressor fell back to its bitrate floor — the
   /// output is then larger than requested. Defaults to `true`.
   final bool targetSizeMet;
+
+  /// The number of encode passes actually run (`1` or `2`).
+  ///
+  /// `1` for a normal single-pass compression. `2` when two-pass encoding
+  /// (`Video.twoPass` / `compressVideos(twoPass:)`) was requested *and* the
+  /// first pass overshot the target, triggering a corrective second pass.
+  /// Defaults to `1`.
+  final int passesUsed;
 }
 
 /// Category of a compression failure. Mirrors the typed exceptions thrown by the

@@ -11,6 +11,7 @@ class Video {
     this.videoWidth,
     this.targetSizeMb,
     this.videoFps,
+    this.twoPass = false,
   }) : assert(
          targetSizeMb == null || videoBitrateInMbps == null,
          'targetSizeMb and videoBitrateInMbps are mutually exclusive',
@@ -71,4 +72,17 @@ class Video {
   /// value at or above the source fps leaves the frame rate unchanged (frames
   /// are never duplicated). Must be greater than 0.
   final int? videoFps;
+
+  /// Whether to use **two-pass** encoding to land closer to [targetSizeMb].
+  ///
+  /// When `true` *and* [targetSizeMb] is set, the compressor encodes once at the
+  /// solved bitrate, measures the output, and — only if it **overshot** the
+  /// target — recomputes the bitrate downward and encodes a second time (capped
+  /// at two passes). This tightens the result toward the requested size at the
+  /// cost of roughly **doubling** the time on overshooting clips.
+  ///
+  /// Ignored when [targetSizeMb] is `null` (there is no size to solve for).
+  /// Defaults to `false`. The number of passes actually run is reported by
+  /// `OnSuccess.passesUsed`.
+  final bool twoPass;
 }

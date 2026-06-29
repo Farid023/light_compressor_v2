@@ -151,6 +151,7 @@ class LightCompressor {
             'targetSizeBytes': video.targetSizeMb != null
                 ? video.targetSizeMb! * 1000 * 1000
                 : null,
+            'twoPass': video.twoPass,
             'videoHeight': video.videoHeight,
             'videoWidth': video.videoWidth,
             'videoFps': video.videoFps,
@@ -197,6 +198,7 @@ class LightCompressor {
         ratio: ratio,
         usedFormat: _videoFormatFromWire(response['usedFormat'] as String?),
         targetSizeMet: (response['targetSizeMet'] as bool?) ?? true,
+        passesUsed: (response['passesUsed'] as num?)?.toInt() ?? 1,
       );
     } else if (response['onFailure'] != null) {
       final String failureMessage = response['onFailure'] as String;
@@ -239,6 +241,10 @@ class LightCompressor {
   /// When [background] is provided the whole batch keeps running while the app
   /// is backgrounded or the screen is off; see [BackgroundConfig] for the
   /// per-platform behaviour and caveats.
+  ///
+  /// [twoPass] enables two-pass encoding to land closer to [targetSizeMb] (it is
+  /// ignored without a target). See `Video.twoPass` for the trade-offs; the
+  /// number of passes run per video is reported by `OnSuccess.passesUsed`.
   Future<List<Result>> compressVideos({
     required List<String> paths,
     required List<String> videoNames,
@@ -251,6 +257,7 @@ class LightCompressor {
     int? videoBitrateInMbps,
     int? targetSizeMb,
     int? videoFps,
+    bool twoPass = false,
     bool disableAudio = false,
     bool isMinBitrateCheckEnabled = true,
     VideoFormat videoFormat = VideoFormat.h264,
@@ -289,6 +296,7 @@ class LightCompressor {
           'targetSizeBytes': targetSizeMb != null
               ? targetSizeMb * 1000 * 1000
               : null,
+          'twoPass': twoPass,
           'videoFps': videoFps,
           'disableAudio': disableAudio,
           'audioBitrate': audio?.bitrate,
@@ -329,6 +337,7 @@ class LightCompressor {
         ratio: ratio,
         usedFormat: _videoFormatFromWire(map['usedFormat'] as String?),
         targetSizeMet: (map['targetSizeMet'] as bool?) ?? true,
+        passesUsed: (map['passesUsed'] as num?)?.toInt() ?? 1,
       );
     } else if (map['onFailure'] != null) {
       return OnFailure(

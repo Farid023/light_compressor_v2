@@ -93,6 +93,14 @@ void main() {
         throwsA(isA<AssertionError>()),
       );
     });
+
+    test('twoPass defaults to false and can be set', () {
+      expect(Video(videoName: 'test.mp4').twoPass, isFalse);
+      expect(
+        Video(videoName: 'test.mp4', targetSizeMb: 10, twoPass: true).twoPass,
+        isTrue,
+      );
+    });
   });
 
   group('CompressionResult', () {
@@ -144,6 +152,27 @@ void main() {
         targetSizeMet: false,
       );
       expect(unmet.targetSizeMet, false);
+    });
+
+    test('OnSuccess passesUsed defaults to 1 and can be set', () {
+      const single = OnSuccess(
+        destinationPath: '/path/to/video.mp4',
+        originalSize: 1000,
+        compressedSize: 500,
+        duration: 10.0,
+        ratio: 50.0,
+      );
+      expect(single.passesUsed, 1);
+
+      const two = OnSuccess(
+        destinationPath: '/path/to/video.mp4',
+        originalSize: 1000,
+        compressedSize: 500,
+        duration: 10.0,
+        ratio: 50.0,
+        passesUsed: 2,
+      );
+      expect(two.passesUsed, 2);
     });
 
     test('OnFailure contains message', () {
