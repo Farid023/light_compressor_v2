@@ -10,4 +10,5 @@ export 'src/light_compressor.dart';
 export 'src/media_info.dart';
 export 'src/thumbnail_request.dart';
 export 'src/video.dart';
+export 'src/video_edit.dart';
 export 'src/video_format.dart';

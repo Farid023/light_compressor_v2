@@ -368,4 +368,90 @@ void main() {
       expect(() => AudioConfig(sampleRate: 0), throwsA(isA<AssertionError>()));
     });
   });
+
+  group('VideoEdit', () {
+    test('defaults to null fields', () {
+      const edit = VideoEdit();
+      expect(edit.trimStartMs, isNull);
+      expect(edit.trimEndMs, isNull);
+      expect(edit.rotationDegrees, isNull);
+    });
+
+    test('stores values', () {
+      const edit = VideoEdit(
+        trimStartMs: 1000,
+        trimEndMs: 5000,
+        rotationDegrees: 90,
+      );
+      expect(edit.trimStartMs, 1000);
+      expect(edit.trimEndMs, 5000);
+      expect(edit.rotationDegrees, 90);
+    });
+
+    test('toMap serializes all keys (null when unset)', () {
+      expect(const VideoEdit().toMap(), <String, dynamic>{
+        'trimStartMs': null,
+        'trimEndMs': null,
+        'rotationDegrees': null,
+      });
+      expect(
+        const VideoEdit(
+          trimStartMs: 1000,
+          trimEndMs: 5000,
+          rotationDegrees: 180,
+        ).toMap(),
+        <String, dynamic>{
+          'trimStartMs': 1000,
+          'trimEndMs': 5000,
+          'rotationDegrees': 180,
+        },
+      );
+    });
+
+    test('asserts trimStartMs is non-negative', () {
+      expect(() => VideoEdit(trimStartMs: -1), throwsA(isA<AssertionError>()));
+    });
+
+    test('asserts trimEndMs is greater than trimStartMs', () {
+      expect(
+        () => VideoEdit(trimStartMs: 5000, trimEndMs: 5000),
+        throwsA(isA<AssertionError>()),
+      );
+      expect(
+        () => VideoEdit(trimStartMs: 5000, trimEndMs: 4000),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('asserts trimEndMs is positive when no start is given', () {
+      expect(() => VideoEdit(trimEndMs: 0), throwsA(isA<AssertionError>()));
+    });
+
+    test('accepts trimEndMs alone (trim from 0)', () {
+      const edit = VideoEdit(trimEndMs: 5000);
+      expect(edit.trimStartMs, isNull);
+      expect(edit.trimEndMs, 5000);
+    });
+
+    test('asserts rotationDegrees is a quarter turn', () {
+      expect(
+        () => VideoEdit(rotationDegrees: 45),
+        throwsA(isA<AssertionError>()),
+      );
+      expect(
+        () => VideoEdit(rotationDegrees: 360),
+        throwsA(isA<AssertionError>()),
+      );
+      expect(
+        () => VideoEdit(rotationDegrees: -90),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('accepts every quarter-turn rotation value', () {
+      for (final int deg in <int>[0, 90, 180, 270]) {
+        expect(VideoEdit(rotationDegrees: deg).rotationDegrees, deg);
+      }
+    });
+  });
 }
