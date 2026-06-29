@@ -218,6 +218,20 @@ object Compressor {
         var rotation = rotationData?.toDoubleOrNull()?.toInt() ?: 0
         val bitrate = actualBitrate
 
+        // Native editing (Phase 9a): resolve the kept time range in microseconds.
+        // The output timeline is rebased to 0, so the *output* duration — used by
+        // the size solver, the progress denominator and the reported duration — is
+        // the trimmed length. loopTrimEndUs == Long.MAX_VALUE means "to the end".
+        val trimStartUs =
+            ((configuration.trimStartMs ?: 0L) * 1000L).coerceIn(0L, duration)
+        val trimEndUs =
+            if (configuration.trimEndMs != null)
+                (configuration.trimEndMs!! * 1000L).coerceIn(trimStartUs + 1L, duration)
+            else duration
+        val loopTrimEndUs =
+            if (configuration.trimEndMs != null) trimEndUs else Long.MAX_VALUE
+        val outDurationUs = (trimEndUs - trimStartUs).coerceAtLeast(1L)
+
         // Check for a min video bitrate before compression
         // Note: this is an experimental value
         if (configuration.isMinBitrateCheckEnabled && bitrate > 0 && bitrate <= MIN_BITRATE)
@@ -239,7 +253,7 @@ object Compressor {
                 configuration.videoBitrateInMbps!! * 1000000
 
             configuration.targetSizeBytes != null -> {
-                val durationSec = duration / 1000000.0
+                val durationSec = outDurationUs / 1000000.0
                 // Reserve bits for the (passed-through) audio track and ~3%
                 // container overhead, then solve for the video bitrate.
                 val audioBps =
@@ -260,6 +274,10 @@ object Compressor {
 
             else -> getBitrate(actualBitrate, configuration.quality)
         }
+
+        // Native editing (Phase 9b): compose the requested quarter-turn on top of
+        // the source orientation, before the dim-swap below.
+        configuration.rotationDegrees?.let { rotation = (rotation + it) % 360 }
 
         //Handle rotation values and swapping height and width if needed
         rotation = when (rotation) {
@@ -289,7 +307,10 @@ object Compressor {
         // passthrough copy.
         val audioTranscode: AudioTranscodeResult? =
             if (!configuration.disableAudio && configuration.audioBitrate != null)
-                transcodeAudioToBuffer(context, srcUri, file, configuration.audioBitrate!!)
+                transcodeAudioToBuffer(
+                    context, srcUri, file, configuration.audioBitrate!!,
+                    trimStartUs, loopTrimEndUs,
+                )
             else null
 
         // Phase 8d: two-pass. Enabled only when requested AND a target size was
@@ -307,8 +328,9 @@ object Compressor {
         // Pass 1 reuses the extractor set up above; start() releases it.
         var result = start(
             index, newWidth, newHeight, destination, newBitrate,
-            configuration.disableAudio, extractor, listener, duration, rotation,
+            configuration.disableAudio, extractor, listener, outDurationUs, rotation,
             outputMime, targetSizeMet, configuration.videoFps, audioTranscode,
+            trimStartUs, loopTrimEndUs,
         )
 
         if (twoPassEnabled && result.success && isRunning &&
@@ -337,8 +359,9 @@ object Compressor {
                     val pass2 = start(
                         index, newWidth, newHeight, tempDest, adjusted,
                         configuration.disableAudio, pass2Extractor, listener,
-                        duration, rotation, outputMime, targetSizeMet,
+                        outDurationUs, rotation, outputMime, targetSizeMet,
                         configuration.videoFps, audioTranscode,
+                        trimStartUs, loopTrimEndUs,
                     )
                     passesUsed = 2
                     if (pass2.success) {
@@ -393,6 +416,8 @@ object Compressor {
         targetSizeMet: Boolean,
         videoFps: Int?,
         audioTranscode: AudioTranscodeResult?,
+        trimStartUs: Long,
+        trimEndUs: Long,
     ): Result {
 
         if (newWidth != 0 && newHeight != 0) {
@@ -438,7 +463,9 @@ object Compressor {
                 }
 
                 extractor.selectTrack(videoIndex)
-                extractor.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+                // Trim (9a): start decoding at the sync sample at/before the trim
+                // start; frames before trimStartUs are decoded but not rendered.
+                extractor.seekTo(trimStartUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
                 val inputFormat = extractor.getTrackFormat(videoIndex)
 
                 // Frame-rate downsampling (8b): drop frames toward videoFps, but
@@ -485,6 +512,9 @@ object Compressor {
 
                     var inputDone = false
                     var outputDone = false
+                    // Trim (9a): set once we signal EOS early at trimEndUs, so the
+                    // decoder's own end-of-stream below never signals it twice.
+                    var trimEosSignaled = false
 
                     var videoTrackIndex = -5
 
@@ -646,51 +676,81 @@ object Compressor {
 
                                 decoderStatus < 0 -> throw RuntimeException("unexpected result from decoder.dequeueOutputBuffer: $decoderStatus")
                                 else -> {
-                                    // Frame-rate downsampling (8b): keep this frame
-                                    // only once its timestamp reaches the next emit
-                                    // point; otherwise drop it (decode without
-                                    // rendering, so it never reaches the encoder).
-                                    val keep = frameIntervalUs <= 0L ||
-                                        bufferInfo.presentationTimeUs >= nextEmitUs
-                                    val doRender = bufferInfo.size != 0 && keep
-                                    if (doRender && frameIntervalUs > 0L) {
-                                        nextEmitUs += frameIntervalUs
-                                    }
-
-                                    decoder.releaseOutputBuffer(decoderStatus, doRender)
-                                    if (doRender) {
-                                        var errorWait = false
-                                        try {
-                                            outputSurface.awaitNewImage()
-                                        } catch (e: Exception) {
-                                            errorWait = true
-                                            Log.e(
-                                                "Compressor",
-                                                e.message ?: "Compression failed at swapping buffer"
-                                            )
+                                    val pts = bufferInfo.presentationTimeUs
+                                    when {
+                                        // Trim (9a): past the kept range — stop here.
+                                        // Drop the frame and signal end-of-stream so
+                                        // the encoder drains; the output ends at
+                                        // trimEndUs.
+                                        trimEndUs != Long.MAX_VALUE && pts >= trimEndUs -> {
+                                            decoder.releaseOutputBuffer(decoderStatus, false)
+                                            decoderOutputAvailable = false
+                                            inputDone = true
+                                            if (!trimEosSignaled) {
+                                                encoder.signalEndOfInputStream()
+                                                trimEosSignaled = true
+                                            }
                                         }
 
-                                        if (!errorWait) {
-                                            outputSurface.drawImage()
+                                        // Trim (9a): before the kept range — decode
+                                        // without rendering (don't advance the fps
+                                        // emit clock) so it never reaches the encoder.
+                                        pts < trimStartUs ->
+                                            decoder.releaseOutputBuffer(decoderStatus, false)
 
-                                            inputSurface.setPresentationTime(bufferInfo.presentationTimeUs * 1000)
-
-                                            if (bufferInfo.presentationTimeUs > maxPresentationTimeUs) {
-                                                maxPresentationTimeUs = bufferInfo.presentationTimeUs
+                                        else -> {
+                                            // Rebase the output timeline to start at 0.
+                                            val rebasedUs = pts - trimStartUs
+                                            // Frame-rate downsampling (8b): keep this
+                                            // frame only once its (rebased) timestamp
+                                            // reaches the next emit point; otherwise
+                                            // drop it (decode without rendering).
+                                            val keep = frameIntervalUs <= 0L ||
+                                                rebasedUs >= nextEmitUs
+                                            val doRender = bufferInfo.size != 0 && keep
+                                            if (doRender && frameIntervalUs > 0L) {
+                                                nextEmitUs += frameIntervalUs
                                             }
 
-                                            val progress = (bufferInfo.presentationTimeUs.toFloat() / duration.toFloat() * 100).coerceAtMost(99f)
-                                            compressionProgressListener.onProgressChanged(
-                                                id,
-                                                progress
-                                            )
+                                            decoder.releaseOutputBuffer(decoderStatus, doRender)
+                                            if (doRender) {
+                                                var errorWait = false
+                                                try {
+                                                    outputSurface.awaitNewImage()
+                                                } catch (e: Exception) {
+                                                    errorWait = true
+                                                    Log.e(
+                                                        "Compressor",
+                                                        e.message ?: "Compression failed at swapping buffer"
+                                                    )
+                                                }
 
-                                            inputSurface.swapBuffers()
+                                                if (!errorWait) {
+                                                    outputSurface.drawImage()
+
+                                                    inputSurface.setPresentationTime(rebasedUs * 1000)
+
+                                                    if (rebasedUs > maxPresentationTimeUs) {
+                                                        maxPresentationTimeUs = rebasedUs
+                                                    }
+
+                                                    val progress = (rebasedUs.toFloat() / duration.toFloat() * 100).coerceAtMost(99f)
+                                                    compressionProgressListener.onProgressChanged(
+                                                        id,
+                                                        progress
+                                                    )
+
+                                                    inputSurface.swapBuffers()
+                                                }
+                                            }
                                         }
                                     }
                                     if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
                                         decoderOutputAvailable = false
-                                        encoder.signalEndOfInputStream()
+                                        if (!trimEosSignaled) {
+                                            encoder.signalEndOfInputStream()
+                                            trimEosSignaled = true
+                                        }
                                     }
                                 }
                             }
@@ -729,6 +789,8 @@ object Compressor {
                             audioExtractorIndex,
                             extractor,
                             bufferInfo,
+                            trimStartUs,
+                            trimEndUs,
                         )
                     }
                 }
@@ -814,6 +876,8 @@ object Compressor {
         srcUri: Uri,
         file: File,
         targetBitrate: Int,
+        trimStartUs: Long,
+        trimEndUs: Long,
     ): AudioTranscodeResult? {
         val extractor = MediaExtractor()
         var fis: FileInputStream? = null
@@ -832,6 +896,7 @@ object Compressor {
             val audioIndex = findTrack(extractor, isVideo = false)
             if (audioIndex < 0) return null
             extractor.selectTrack(audioIndex)
+            extractor.seekTo(trimStartUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
             val inputFormat = extractor.getTrackFormat(audioIndex)
             val mime = inputFormat.getString(MediaFormat.KEY_MIME) ?: return null
             val sampleRate =
@@ -880,15 +945,27 @@ object Compressor {
                 if (!extractorDone) {
                     val inIndex = decoder.dequeueInputBuffer(timeoutUs)
                     if (inIndex >= 0) {
+                        // Trim (9a): skip audio before the trim start.
+                        while (extractor.sampleTrackIndex == audioIndex &&
+                            extractor.sampleTime in 0L until trimStartUs
+                        ) {
+                            extractor.advance()
+                        }
+                        val sampleTime = extractor.sampleTime
                         val buf = decoder.getInputBuffer(inIndex)!!
                         val size = extractor.readSampleData(buf, 0)
-                        if (size < 0) {
+                        if (size < 0 ||
+                            (trimEndUs != Long.MAX_VALUE && sampleTime >= trimEndUs)
+                        ) {
                             decoder.queueInputBuffer(
                                 inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM,
                             )
                             extractorDone = true
                         } else {
-                            decoder.queueInputBuffer(inIndex, 0, size, extractor.sampleTime, 0)
+                            // Rebase onto the trimmed timeline.
+                            decoder.queueInputBuffer(
+                                inIndex, 0, size, sampleTime - trimStartUs, 0,
+                            )
                             extractor.advance()
                         }
                     }
@@ -994,6 +1071,8 @@ object Compressor {
         audioExtractorIndex: Int,
         extractor: MediaExtractor,
         bufferInfo: MediaCodec.BufferInfo,
+        trimStartUs: Long,
+        trimEndUs: Long,
     ) {
         extractor.selectTrack(audioExtractorIndex)
         val audioFormat = extractor.getTrackFormat(audioExtractorIndex)
@@ -1012,25 +1091,36 @@ object Compressor {
             }
         }
 
-        extractor.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+        extractor.seekTo(trimStartUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
         var inputDone = false
         while (!inputDone) {
             when (extractor.sampleTrackIndex) {
                 audioExtractorIndex -> {
-                    val chunkSize = extractor.readSampleData(buffer, 0)
-                    if (chunkSize >= 0) {
-                        bufferInfo.offset = 0
-                        bufferInfo.size = chunkSize
-                        bufferInfo.presentationTimeUs = extractor.sampleTime
-                        bufferInfo.flags =
-                            if ((extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0)
-                                MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
-                        buffer.position(0)
-                        buffer.limit(chunkSize)
-                        mediaMuxer.writeSampleData(muxerTrackIndex, buffer, bufferInfo)
-                        extractor.advance()
-                    } else {
-                        inputDone = true
+                    val sampleTime = extractor.sampleTime
+                    when {
+                        // Trim (9a): past the kept range — stop.
+                        trimEndUs != Long.MAX_VALUE && sampleTime >= trimEndUs ->
+                            inputDone = true
+                        // Trim (9a): before the kept range — skip without writing.
+                        sampleTime in 0L until trimStartUs -> extractor.advance()
+                        else -> {
+                            val chunkSize = extractor.readSampleData(buffer, 0)
+                            if (chunkSize >= 0) {
+                                bufferInfo.offset = 0
+                                bufferInfo.size = chunkSize
+                                // Rebase onto the trimmed timeline.
+                                bufferInfo.presentationTimeUs = sampleTime - trimStartUs
+                                bufferInfo.flags =
+                                    if ((extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0)
+                                        MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
+                                buffer.position(0)
+                                buffer.limit(chunkSize)
+                                mediaMuxer.writeSampleData(muxerTrackIndex, buffer, bufferInfo)
+                                extractor.advance()
+                            } else {
+                                inputDone = true
+                            }
+                        }
                     }
                 }
                 -1 -> inputDone = true

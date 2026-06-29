@@ -154,26 +154,27 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         val background = parseBackground(call)
         if (background != null) maybeRequestNotificationPermission()
         val videoFormat = parseVideoFormat(call)
+        val edit = parseEdit(call)
 
         if (isSharedStorage) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 requestPermissionAndCompress33(
                     path, result, quality, isMinBitrateCheckEnabled,
                     videoBitrateInMbps, targetSizeBytes, twoPass, videoFps, audioBitrate, audioSampleRate, disableAudio, resizer,
-                    storageConfiguration, videoName, background, videoFormat
+                    storageConfiguration, videoName, background, videoFormat, edit
                 )
             } else {
                 requestPermissionAndCompressLegacy(
                     path, result, quality, isMinBitrateCheckEnabled,
                     videoBitrateInMbps, targetSizeBytes, twoPass, videoFps, audioBitrate, audioSampleRate, disableAudio, resizer,
-                    storageConfiguration, videoName, background, videoFormat
+                    storageConfiguration, videoName, background, videoFormat, edit
                 )
             }
         } else {
             compressVideo(
                 path, result, quality, isMinBitrateCheckEnabled,
                 videoBitrateInMbps, targetSizeBytes, twoPass, videoFps, audioBitrate, audioSampleRate, disableAudio, resizer,
-                storageConfiguration, videoName, background, videoFormat
+                storageConfiguration, videoName, background, videoFormat, edit
             )
         }
     }
@@ -197,6 +198,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         videoName: String,
         background: BackgroundParams?,
         videoFormat: VideoFormat,
+        edit: EditParams?,
     ) {
         val sourcePath = path
         // A MethodChannel reply may be submitted only once. A cancelled run can
@@ -232,6 +234,9 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                 resizer = resizer,
                 videoNames = listOf(videoName),
                 videoFormat = videoFormat,
+                trimStartMs = edit?.trimStartMs,
+                trimEndMs = edit?.trimEndMs,
+                rotationDegrees = edit?.rotationDegrees,
             ),
             listener = object : CompressionListener {
                 override fun onStart(index: Int) {}
@@ -335,6 +340,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         val background = parseBackground(call)
         if (background != null) maybeRequestNotificationPermission()
 
+        val edit = parseEdit(call)
         val count = paths.size
         val results = arrayOfNulls<Map<String, Any?>>(count)
         val percents = FloatArray(count)
@@ -383,6 +389,9 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                 resizer = resizer,
                 videoNames = videoNames,
                 videoFormat = parseVideoFormat(call),
+                trimStartMs = edit?.trimStartMs,
+                trimEndMs = edit?.trimEndMs,
+                rotationDegrees = edit?.rotationDegrees,
             ),
             listener = object : CompressionListener {
                 override fun onStart(index: Int) {}
@@ -449,7 +458,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         audioBitrate: Int?, audioSampleRate: Int?,
         disableAudio: Boolean, resizer: VideoResizer?,
         storageConfiguration: StorageConfiguration, videoName: String,
-        background: BackgroundParams?, videoFormat: VideoFormat
+        background: BackgroundParams?, videoFormat: VideoFormat, edit: EditParams?
     ) {
         if (ContextCompat.checkSelfPermission(
                 activity, Manifest.permission.READ_MEDIA_VIDEO
@@ -468,7 +477,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         }
         compressVideo(
             path, result, quality, isMinBitrateCheckEnabled,
-            videoBitrateInMbps, targetSizeBytes, twoPass, videoFps, audioBitrate, audioSampleRate, disableAudio, resizer, storageConfiguration, videoName, background, videoFormat
+            videoBitrateInMbps, targetSizeBytes, twoPass, videoFps, audioBitrate, audioSampleRate, disableAudio, resizer, storageConfiguration, videoName, background, videoFormat, edit
         )
     }
 
@@ -479,7 +488,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         audioBitrate: Int?, audioSampleRate: Int?,
         disableAudio: Boolean, resizer: VideoResizer?,
         storageConfiguration: StorageConfiguration, videoName: String,
-        background: BackgroundParams?, videoFormat: VideoFormat
+        background: BackgroundParams?, videoFormat: VideoFormat, edit: EditParams?
     ) {
         val permissions = arrayOf(
             Manifest.permission.READ_EXTERNAL_STORAGE,
@@ -490,7 +499,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         }
         compressVideo(
             path, result, quality, isMinBitrateCheckEnabled,
-            videoBitrateInMbps, targetSizeBytes, twoPass, videoFps, audioBitrate, audioSampleRate, disableAudio, resizer, storageConfiguration, videoName, background, videoFormat
+            videoBitrateInMbps, targetSizeBytes, twoPass, videoFps, audioBitrate, audioSampleRate, disableAudio, resizer, storageConfiguration, videoName, background, videoFormat, edit
         )
     }
 
@@ -515,6 +524,26 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         val map = call.argument<Map<String, Any?>>("background") ?: return null
         return BackgroundParams(
             title = (map["notificationTitle"] as? String) ?: "Compressing video",
+        )
+    }
+
+    /** Optional native edits (Phase 9): a trim range + a quarter-turn rotation. */
+    private data class EditParams(
+        val trimStartMs: Long?,
+        val trimEndMs: Long?,
+        val rotationDegrees: Int?,
+    )
+
+    /**
+     * Parses the optional nested `edit` map sent from Dart. Returns `null` when
+     * no editing was requested, in which case the video is compressed unchanged.
+     */
+    private fun parseEdit(call: MethodCall): EditParams? {
+        val map = call.argument<Map<String, Any?>>("edit") ?: return null
+        return EditParams(
+            trimStartMs = (map["trimStartMs"] as? Number)?.toLong(),
+            trimEndMs = (map["trimEndMs"] as? Number)?.toLong(),
+            rotationDegrees = (map["rotationDegrees"] as? Number)?.toInt(),
         )
     }
 

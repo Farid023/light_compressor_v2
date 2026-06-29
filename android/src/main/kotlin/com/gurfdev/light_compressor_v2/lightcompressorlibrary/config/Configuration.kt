@@ -36,6 +36,14 @@ data class Configuration(
     // compressor re-encodes once more at a corrected bitrate if the first pass
     // overshot the target. Ignored without a target.
     var twoPass: Boolean = false,
+    // Native editing (Phase 9). [trimStartMs]/[trimEndMs] select the kept range
+    // in milliseconds (the output timeline is rebased to 0); [rotationDegrees]
+    // adds a quarter-turn (0/90/180/270) on top of the source orientation. All
+    // null = no edit. Appended last so the deprecated positional constructors
+    // above stay valid.
+    var trimStartMs: Long? = null,
+    var trimEndMs: Long? = null,
+    var rotationDegrees: Int? = null,
 ) {
     @Deprecated("Use VideoResizer to override the output video dimensions.", ReplaceWith("Configuration(quality, isMinBitrateCheckEnabled, videoBitrateInMbps, disableAudio, resizer = if (keepOriginalResolution) null else VideoResizer.auto, videoNames)"))
     constructor(
