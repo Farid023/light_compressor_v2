@@ -103,6 +103,7 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
         let audioBitrate       = args["audioBitrate"]       as? Int
         let audioSampleRate    = args["audioSampleRate"]    as? Int
         let twoPass            = args["twoPass"]            as? Bool ?? false
+        let edit               = args["edit"]               as? [String: Any]
 
         let destinationURL = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("\(videoName).mp4")
@@ -145,7 +146,10 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
                         videoFps: videoFps,
                         audioBitrate: audioBitrate,
                         audioSampleRate: audioSampleRate,
-                        twoPass: twoPass))
+                        twoPass: twoPass,
+                        trimStartMs: edit?["trimStartMs"] as? Int,
+                        trimEndMs: edit?["trimEndMs"] as? Int,
+                        rotationDegrees: edit?["rotationDegrees"] as? Int))
             ],
             progressQueue: .main,
             progressHandler: { [weak self] _, progress in
@@ -238,6 +242,7 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
         let audioBitrate       = args["audioBitrate"]       as? Int
         let audioSampleRate    = args["audioSampleRate"]    as? Int
         let twoPass            = args["twoPass"]            as? Bool ?? false
+        let edit               = args["edit"]               as? [String: Any]
         let videoHeight        = args["videoHeight"]        as? Int
         let videoWidth         = args["videoWidth"]         as? Int
         let videoSize: CGSize? = videoWidth != nil && videoHeight != nil
@@ -256,7 +261,10 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
             videoFps: videoFps,
             audioBitrate: audioBitrate,
             audioSampleRate: audioSampleRate,
-            twoPass: twoPass)
+            twoPass: twoPass,
+            trimStartMs: edit?["trimStartMs"] as? Int,
+            trimEndMs: edit?["trimEndMs"] as? Int,
+            rotationDegrees: edit?["rotationDegrees"] as? Int)
 
         let count = paths.count
         var videos: [LightCompressor.Video] = []
