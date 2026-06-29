@@ -132,6 +132,23 @@ void main() {
           await compressSample(disableAudio: true, name: 'lc_it_noaudio');
       await expectReadableVideo(compressor, ok.destinationPath);
     });
+
+    testWidgets('debugLogging does not break a compression', (
+      WidgetTester tester,
+    ) async {
+      if (source == null) return markTestSkipped(kNoClipSkipReason);
+      final Result r = await compressor.compressVideo(
+        path: source!,
+        videoQuality: VideoQuality.medium,
+        isMinBitrateCheckEnabled: false,
+        video: Video(videoName: 'lc_it_debuglog'),
+        android: AndroidConfig(isSharedStorage: false),
+        ios: IOSConfig(saveInGallery: false),
+        debugLogging: true,
+      );
+      expect(r, isA<OnSuccess>());
+      await expectReadableVideo(compressor, (r as OnSuccess).destinationPath);
+    });
   });
 
   group('progress streams', () {

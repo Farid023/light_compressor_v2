@@ -4,6 +4,10 @@
 
 ### New
 
+- **Opt-in debug logging** — pass `debugLogging: true` to `compressVideo` /
+  `compressVideos` to have the native side emit a couple of structured log lines
+  per video (the resolved encode plan and the outcome). File paths are reduced to
+  their base names. Off by default; intended for diagnosing a single run.
 - **Progress detail (ETA + bytes)** — a new **`onProgressDetail`**
   (`Stream<CompressionProgress>`) reports, alongside the percentage, the
   estimated time remaining (`etaMs`), elapsed time (`elapsedMs`) and encoded

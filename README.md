@@ -443,6 +443,7 @@ try {
 | `background` | `BackgroundConfig?` | | `null` | Keep running while the app is backgrounded. See [`BackgroundConfig`](#backgroundconfig). |
 | `audio` | `AudioConfig?` | | `null` | Re-encode the audio track as AAC. See [`AudioConfig`](#audioconfig). |
 | `edit` | `VideoEdit?` | | `null` | Trim and/or rotate while compressing. See [`VideoEdit`](#videoedit). |
+| `debugLogging` | `bool` | | `false` | Emit native structured debug logs for this run (paths reduced to base names). |
 
 ### `compressVideos()` → `Future<List<Result>>`
 
@@ -465,6 +466,7 @@ try {
 | `audio` | `AudioConfig?` | | `null` | Re-encode the audio track as AAC. See [`AudioConfig`](#audioconfig). |
 | `edit` | `VideoEdit?` | | `null` | Trim and/or rotate every video. See [`VideoEdit`](#videoedit). |
 | `maxConcurrent` | `int?` | | `null` | Cap how many videos transcode at once (`>= 1`). Unset keeps the platform default (Android 2; Apple starts all). No effect on a single video. |
+| `debugLogging` | `bool` | | `false` | Emit native structured debug logs for every video in the batch (paths reduced to base names). |
 
 ### `getCompressionEstimate()` → `Future<CompressionEstimate>`
 

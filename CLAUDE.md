@@ -196,8 +196,8 @@ encodes/decodes the channel contract.
   (`videoName`, `isMinBitrateCheckEnabled`, `saveAt`, `videoFormat`, `background`,
   the Phase 8 keys `targetSizeBytes` / `videoFps` / `audioBitrate` /
   `audioSampleRate` / `twoPass`, the Phase 9 nested `edit` map
-  (`trimStartMs` / `trimEndMs` / `rotationDegrees`), and the Phase 11 batch-only
-  `maxConcurrent`, …) must match the keys the
+  (`trimStartMs` / `trimEndMs` / `rotationDegrees`), the Phase 11 batch-only
+  `maxConcurrent`, and the opt-in `debugLogging`, …) must match the keys the
   natives read via
   `call.argument(...)` / `args[...]`. Renaming a key here means renaming it in all
   three natives.
