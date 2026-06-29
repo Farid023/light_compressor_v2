@@ -86,7 +86,8 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
                             rotationDegrees: edit?["rotationDegrees"] as? Int,
                             brightness: edit?["brightness"] as? Double,
                             contrast: edit?["contrast"] as? Double,
-                            saturation: edit?["saturation"] as? Double)
+                            saturation: edit?["saturation"] as? Double,
+                            debugLogging: myArgs["debugLogging"] as? Bool ?? false)
                     )],
                     progressQueue: .main,
                     progressHandler: { _, progress in
@@ -242,7 +243,8 @@ public class LightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandle
             brightness: edit?["brightness"] as? Double,
             contrast: edit?["contrast"] as? Double,
             saturation: edit?["saturation"] as? Double,
-            maxConcurrent: args["maxConcurrent"] as? Int)
+            maxConcurrent: args["maxConcurrent"] as? Int,
+            debugLogging: args["debugLogging"] as? Bool ?? false)
 
         let count = paths.count
         var videos: [LightCompressor.Video] = []

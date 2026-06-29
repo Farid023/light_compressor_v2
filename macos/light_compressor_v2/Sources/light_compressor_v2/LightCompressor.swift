@@ -143,6 +143,9 @@ public struct LightCompressor {
             // Phase 11a: max videos transcoded at once in a batch. nil starts
             // them all (the historic behaviour); a set value (>= 1) throttles.
             public let maxConcurrent: Int?
+            // Phase 11c: opt-in structured debug logging (paths reduced to base
+            // names). Off by default.
+            public let debugLogging: Bool
 
             public init(
                 quality: VideoQuality = .medium,
@@ -163,7 +166,8 @@ public struct LightCompressor {
                 brightness: Double? = nil,
                 contrast: Double? = nil,
                 saturation: Double? = nil,
-                maxConcurrent: Int? = nil
+                maxConcurrent: Int? = nil,
+                debugLogging: Bool = false
             ) {
                 self.quality = quality
                 self.isMinBitrateCheckEnabled = isMinBitrateCheckEnabled
@@ -184,6 +188,7 @@ public struct LightCompressor {
                 self.contrast = contrast
                 self.saturation = saturation
                 self.maxConcurrent = maxConcurrent
+                self.debugLogging = debugLogging
             }
         }
 
@@ -579,10 +584,34 @@ public struct LightCompressor {
             let targetBytes = configuration.targetSizeBytes ?? 0
             let floor = min(Double(Self.MIN_BITRATE), Double(bitrate))
 
+            // Phase 11c: log the resolved encode plan (paths reduced to base
+            // names), gated on the opt-in flag.
+            if configuration.debugLogging {
+                NSLog("[LightCompressor] plan #\(index) out=\(destination.lastPathComponent) "
+                    + "dims=\(size.width)x\(size.height) bitrate=\(newBitrate) "
+                    + "codec=\(resolvedFormat == .h265 ? "h265" : "h264") "
+                    + "fps=\(configuration.videoFps.map(String.init) ?? "src") "
+                    + "target=\(configuration.targetSizeBytes.map(String.init) ?? "-") "
+                    + "targetMet=\(targetSizeMet) twoPass=\(twoPassEnabled) "
+                    + "rotation=\(configuration.rotationDegrees ?? 0)")
+            }
+
             // Reports the terminal result for this video and frees its slot.
             // The single funnel for the encode path; validation failures above
             // call onDone() directly (they precede the values finish() needs).
             func finish(_ outcome: PassOutcome, passesUsed: Int) {
+                if configuration.debugLogging {
+                    switch outcome {
+                    case .cancelled:
+                        NSLog("[LightCompressor] cancelled #\(index)")
+                    case .failure(let error):
+                        NSLog("[LightCompressor] failed #\(index) \(error.title)")
+                    case .success(let url):
+                        NSLog("[LightCompressor] done #\(index) out=\(url.lastPathComponent) "
+                            + "size=\(Self.fileSize(url)) passes=\(passesUsed) "
+                            + "codec=\(resolvedFormat == .h265 ? "h265" : "h264")")
+                    }
+                }
                 switch outcome {
                 case .cancelled:
                     completion(.onCancelled)
