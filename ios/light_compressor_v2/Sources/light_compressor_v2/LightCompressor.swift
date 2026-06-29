@@ -49,6 +49,17 @@ public class Compression {
     public var cancel = false
 }
 
+/// A progress sample for one video (Phase 11b). `percent` is `0..100`;
+/// `bytesProcessed` is encoded output bytes written so far; `etaMs` is the
+/// estimated time remaining in ms (`-1` while not yet estimable); `elapsedMs`
+/// is time since this encode pass started.
+public struct ProgressInfo {
+    public let percent: Double
+    public let bytesProcessed: Int64
+    public let etaMs: Int64
+    public let elapsedMs: Int64
+}
+
 /// Classifies a compression failure so callers can react programmatically
 /// instead of matching error message text.
 public enum CompressionErrorType: String {
@@ -441,13 +452,14 @@ public struct LightCompressor {
     /// - Parameters:
     ///   - videos: The list of videos to compress.
     ///   - progressQueue: The queue on which `progressHandler` is called. Defaults to `.main`.
-    ///   - progressHandler: Called repeatedly with the video index and its current `Progress`.
+    ///   - progressHandler: Called repeatedly with the video index and its current `ProgressInfo`
+    ///     (percent plus elapsed time, estimated time remaining and output bytes so far).
     ///   - completion: Called with the `CompressionResult` for each video.
     /// - Returns: A `Compression` handle that can be used to cancel the operation.
     public func compressVideo(
         videos: [Video],
         progressQueue: DispatchQueue = .main,
-        progressHandler: ((Int, Progress) -> Void)?,
+        progressHandler: ((Int, ProgressInfo) -> Void)?,
         completion: @escaping (CompressionResult) -> Void
     ) -> Compression {
         let compressionOperation = Compression()
@@ -710,12 +722,15 @@ public struct LightCompressor {
         destination: URL,
         compressionOperation: Compression,
         progressQueue: DispatchQueue,
-        progressHandler: ((Int, Progress) -> Void)?,
+        progressHandler: ((Int, ProgressInfo) -> Void)?,
         onPassComplete: @escaping (PassOutcome) -> Void
     ) {
         var frameCount = 0
         let progress = Progress(totalUnitCount: Int64(totalFrames))
         var nextEmitSeconds = 0.0
+        // Phase 11b: anchor elapsed time for the ETA projection. Output bytes
+        // are read from the growing destination file at each tick.
+        let passStart = Date()
         // Cap progress just below the total so fractionCompleted never reaches
         // 1.0 (100%); the terminal signal is onPassComplete, not a 100 event.
         let progressCap = max(Int64(totalFrames) - 1, 0)
@@ -864,7 +879,22 @@ public struct LightCompressor {
                 frameCount += 1
                 if let handler = progressHandler {
                     progress.completedUnitCount = min(Int64(frameCount), progressCap)
-                    progressQueue.async { handler(index, progress) }
+                    let fraction = progress.fractionCompleted
+                    let elapsedMs = Int64(Date().timeIntervalSince(passStart) * 1000)
+                    // ETA only once there is enough signal; -1 = "not yet".
+                    let etaMs: Int64 = fraction > 0.01
+                        ? Int64(Double(elapsedMs) * (1 - fraction) / fraction)
+                        : -1
+                    let outBytes = Int64(
+                        ((try? FileManager.default
+                            .attributesOfItem(atPath: destination.path))?[.size]
+                            as? Int) ?? 0)
+                    let info = ProgressInfo(
+                        percent: fraction * 100,
+                        bytesProcessed: outBytes,
+                        etaMs: etaMs,
+                        elapsedMs: elapsedMs)
+                    progressQueue.async { handler(index, info) }
                 }
 
                 let sampleBuffer = videoReaderOutput.copyNextSampleBuffer()
