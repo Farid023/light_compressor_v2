@@ -275,10 +275,6 @@ object Compressor {
             else -> getBitrate(actualBitrate, configuration.quality)
         }
 
-        // Native editing (Phase 9b): compose the requested quarter-turn on top of
-        // the source orientation, before the dim-swap below.
-        configuration.rotationDegrees?.let { rotation = (rotation + it) % 360 }
-
         //Handle rotation values and swapping height and width if needed
         rotation = when (rotation) {
             90, 270 -> {
@@ -291,6 +287,13 @@ object Compressor {
             180 -> 0
             else -> rotation
         }
+
+        // Native editing (Phase 9b): apply the requested quarter-turn as a
+        // container orientation hint on top of the (now-upright) output. The GL
+        // pipeline draws frames upright regardless of this value, so this is a
+        // metadata-only rotation — stored frames are unchanged and players rotate
+        // on playback. start() writes it via mediaMuxer.setOrientationHint().
+        configuration.rotationDegrees?.let { rotation = (rotation + it) % 360 }
 
         // Decide the output codec. H.265 is used only when the caller asked for
         // it AND the device exposes a hardware HEVC encoder; otherwise we fall
