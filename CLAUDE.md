@@ -443,7 +443,10 @@ build step.
 
 - **Native codecs only** — never ffmpeg/ffprobe, anywhere, ever (see top).
 - **Apple sync rule** — engine + `Encodable.swift` are copy-identical iOS↔macOS;
-  plugin files are per-platform (see the Apple section).
+  plugin files are per-platform (see the Apple section). Enforced by
+  [`test/apple_engine_sync_test.dart`](test/apple_engine_sync_test.dart) (runs
+  under `flutter test`, so CI fails on drift) — after editing the iOS engine,
+  copy it to macOS or this test goes red.
 - **Strict lint.** [`analysis_options.yaml`](analysis_options.yaml) enables a
   large explicit rule set (e.g. `always_specify_types`, `prefer_single_quotes`,
   `sort_constructors_first`, `directives_ordering`) — *not* stock `flutter_lints`.
