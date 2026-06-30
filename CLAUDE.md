@@ -254,13 +254,15 @@ a vendored fork of the LightCompressor library:
   `setOrientationHint` applied *after* the source-rotation normalization — and
   colour, baked by the `TextureRenderer` fragment shader (identity uniforms when
   no colour, so it stays free).
-  **Large-file limits (review):** `transcodeAudioToBuffer` holds the
-  whole encoded audio track in memory, so the AAC re-encode path's memory scales
-  with audio *duration* (the no-`AudioConfig` passthrough copy doesn't buffer) —
-  a streaming rewrite is a known follow-up. And `MediaMuxer`'s MP4 writer uses
-  32-bit box offsets, so outputs near **4 GB** can fail/truncate. Both are
-  documented in the README's "Large files & memory". (The size/bitrate/PTS math
-  is `Long`/`Double`; only Apple's `getMediaInfo` had a 32-bit `fileSize`
+  **Large-file note:** `transcodeAudioToBuffer` spills the re-encoded AAC to a
+  temp file (in the cache dir, deleted when compression finishes; re-read for
+  each two-pass run) and `writeBufferedAudio` streams it into the muxer, so the
+  AAC re-encode path's memory stays flat regardless of audio *duration* — it
+  can't write straight to the muxer because `MediaMuxer` needs the audio format
+  before `start()`. The remaining large-file limit: `MediaMuxer`'s MP4 writer
+  uses 32-bit box offsets, so outputs near **4 GB** can fail/truncate (documented
+  in the README's "Large files & memory"). (The size/bitrate/PTS math is
+  `Long`/`Double`; only Apple's `getMediaInfo` had a 32-bit `fileSize`
   truncation, since fixed via `int64Value`.)
 - [`config/Configuration.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/config/Configuration.kt)
   — the `Configuration` settings data class **and** the `StorageConfiguration`

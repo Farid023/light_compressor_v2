@@ -440,11 +440,11 @@ try {
 
 A few things to know when compressing very large or very long sources:
 
-- **Audio re-encode buffers in memory.** Passing an `AudioConfig` (AAC re-encode)
-  makes Android hold the encoded audio track in memory until muxing, so memory
-  grows with audio **duration** (roughly tens of MB per hour). It's fine for
-  typical clips; for multi-hour sources, omit `AudioConfig` so the source audio
-  is copied through with no buffering.
+- **Audio re-encode spills to disk, not RAM (Android).** Passing an `AudioConfig`
+  (AAC re-encode) makes Android buffer the encoded audio to a temp file and then
+  stream it into the muxer — needed because `MediaMuxer` wants the audio format
+  before it starts — so memory stays flat regardless of audio **duration**. The
+  passthrough copy (no `AudioConfig`) doesn't buffer at all.
 - **~4 GB MP4 output ceiling (Android).** `MediaMuxer`'s MP4 writer uses 32-bit
   box offsets, so an output approaching 4 GB may fail or truncate. For very
   large/long sources, pass `targetSizeMb` to keep the output well under that.
