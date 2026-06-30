@@ -261,7 +261,7 @@ a vendored fork of the LightCompressor library:
   32-bit box offsets, so outputs near **4 GB** can fail/truncate. Both are
   documented in the README's "Large files & memory". (The size/bitrate/PTS math
   is `Long`/`Double`; only Apple's `getMediaInfo` had a 32-bit `fileSize`
-  truncation, fixed in 11d via `int64Value`.)
+  truncation, since fixed via `int64Value`.)
 - [`config/Configuration.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/config/Configuration.kt)
   — the `Configuration` settings data class **and** the `StorageConfiguration`
   strategies that decide where output lands: `SharedStorageConfiguration`
@@ -294,7 +294,19 @@ both declared in
 foreground-service / notification permissions.
 
 **Build** — Kotlin DSL ([`build.gradle.kts`](android/build.gradle.kts)), **minSdk 24**.
-Built through the example app, not standalone.
+Built through the example app, not standalone. The floor stays 24 **by toolchain**:
+recent Flutter's Gradle dependency checker *errors* an app `minSdk < 23` and
+*warns* `< 24`, with no opt-out — so lowering the plugin below 24 cannot help any
+consumer on a current Flutter. The `Build.VERSION.SDK_INT` runtime gates all have
+correct ≤22 fallbacks (so the engine *runs* on 21+), but it is **not lint-clean
+below 29**: `lint` at minSdk 21 reports harmless `InlinedApi` constants
+(`KEY_LEVEL`, `KEY_COLOR_*`, MediaStore `RELATIVE_PATH` / `IS_PENDING` /
+`VOLUME_EXTERNAL_PRIMARY`) **and** one real `NewApi` error —
+`MediaStore.Downloads.EXTERNAL_CONTENT_URI` (API 29) in
+`FileUtils.saveVideoInExternal`, runtime-safe only because its caller gates
+`SDK_INT >= Q` (a guard lint can't see). Do not lower the floor without
+re-checking the Flutter threshold **and** running the plugin's `lint` (it would
+first need `@RequiresApi` annotations on the MediaStore writer).
 
 ---
 

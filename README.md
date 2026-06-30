@@ -62,6 +62,9 @@ Extreme high bitrates are reduced while maintaining good video quality, resultin
 
 **Minimum versions:** iOS 11 · Android API 24 · macOS 10.15
 
+Windows and Linux are **not planned** (each needs a large native effort — Media
+Foundation / GStreamer). Web is **not currently supported**.
+
 ---
 
 ## 📦 Installation
@@ -85,7 +88,7 @@ No extra Podfile configuration is required. The plugin ships with both a `.podsp
 
 ### Android — minSdk
 
-The plugin requires **minSdk 24**. If your app targets a lower SDK, update your `android/app/build.gradle`:
+The plugin requires **minSdk 24**. If your app targets a lower SDK, raise it in `android/app/build.gradle`:
 
 ```groovy
 android {
@@ -94,6 +97,13 @@ android {
     }
 }
 ```
+
+> **Why 24 and not lower?** The native engine itself runs on API 21+, but the
+> Flutter Gradle toolchain sets the practical floor: recent Flutter **fails the
+> build** for an app `minSdk` below 23 and **warns** below 24, with no opt-out.
+> So 24 is the lowest clean target. To reach Android 6.0 you may set `minSdk 23`
+> (your build then shows Flutter's "below 24" warning); 21/22 are not buildable
+> on a current Flutter toolchain.
 
 ---
 
