@@ -114,6 +114,14 @@ object VideoCompressor : CoroutineScope by MainScope() {
         jobs.clear()
     }
 
+    /**
+     * Whether a compression run is currently active. Reflects live coroutine
+     * state ([Job.isActive]) rather than [Compressor.isRunning], which is not
+     * reset on normal completion and so cannot tell "finished" from "running".
+     */
+    @JvmStatic
+    fun isCompressing(): Boolean = jobs.any { it.isActive }
+
     private fun doVideoCompression(
         context: Context,
         uris: List<Uri>,

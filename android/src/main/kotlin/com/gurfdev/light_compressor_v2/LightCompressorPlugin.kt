@@ -22,6 +22,8 @@ import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoCompressor
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoFormat
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoQuality
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.config.*
+import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils
+import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.roundDimension
 import com.google.gson.Gson
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -95,6 +97,9 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
             "clearCache" -> handleClearCache(result)
             "getMediaInfo" -> handleGetMediaInfo(call, result)
             "getVideoThumbnail" -> handleGetVideoThumbnail(call, result)
+            "getVideoThumbnails" -> handleGetVideoThumbnails(call, result)
+            "getCompressionEstimate" -> handleGetCompressionEstimate(call, result)
+            "isCompressing" -> result.success(VideoCompressor.isCompressing())
             else -> result.notImplemented()
         }
     }
@@ -623,6 +628,153 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                 postSuccess(result, outFile.absolutePath)
             } catch (e: Exception) {
                 postError(result, "THUMBNAIL_FAILED", e.message ?: "Failed to generate thumbnail.")
+            } finally {
+                try { retriever.release() } catch (ignored: Exception) {}
+            }
+        }.start()
+    }
+
+    // Extracts several frames from one source in a single call, reusing one
+    // MediaMetadataRetriever. Returns the JPEG paths in request order.
+    private fun handleGetVideoThumbnails(call: MethodCall, result: Result) {
+        val path: String? = call.argument("path")
+        if (path.isNullOrEmpty()) {
+            result.error("VIDEO_NOT_FOUND", "No video path was provided.", null)
+            return
+        }
+        val requests: List<Map<String, Any?>> = call.argument("requests") ?: emptyList()
+
+        Thread {
+            val retriever = MediaMetadataRetriever()
+            try {
+                val file = File(path)
+                if (!file.exists()) {
+                    postError(result, "VIDEO_NOT_FOUND", "The video file was not found: $path")
+                    return@Thread
+                }
+                retriever.setDataSource(file.absolutePath)
+                val paths = ArrayList<String>(requests.size)
+                for ((i, req) in requests.withIndex()) {
+                    val positionInMs =
+                        ((req["positionInMs"] as? Number)?.toInt() ?: 0).coerceAtLeast(0)
+                    val quality = ((req["quality"] as? Number)?.toInt() ?: 50).coerceIn(0, 100)
+                    val bitmap: Bitmap? = retriever.getFrameAtTime(
+                        positionInMs * 1000L,
+                        MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+                    )
+                    if (bitmap == null) {
+                        postError(result, "THUMBNAIL_FAILED", "Could not extract a frame at ${positionInMs}ms.")
+                        return@Thread
+                    }
+                    val outFile = File(applicationContext.cacheDir, "thumb_${System.currentTimeMillis()}_$i.jpg")
+                    FileOutputStream(outFile).use { out ->
+                        bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+                    }
+                    bitmap.recycle()
+                    paths.add(outFile.absolutePath)
+                }
+                postSuccess(result, paths)
+            } catch (e: Exception) {
+                postError(result, "THUMBNAIL_FAILED", e.message ?: "Failed to generate thumbnails.")
+            } finally {
+                try { retriever.release() } catch (ignored: Exception) {}
+            }
+        }.start()
+    }
+
+    // Predicts the compressed output (size/bitrate/resolution) without running a
+    // transcode, by applying the SAME bitrate + resize math the compressor uses.
+    private fun handleGetCompressionEstimate(call: MethodCall, result: Result) {
+        val path: String? = call.argument("path")
+        if (path.isNullOrEmpty()) {
+            result.error("VIDEO_NOT_FOUND", "No video path was provided.", null)
+            return
+        }
+        val keepOriginalResolution: Boolean = call.argument("keepOriginalResolution") ?: false
+        val videoWidth: Int? = call.argument("videoWidth")
+        val videoHeight: Int? = call.argument("videoHeight")
+        val videoBitrateInMbps: Int? = call.argument("videoBitrateInMbps")
+        val disableAudio: Boolean = call.argument("disableAudio") ?: false
+        val quality: VideoQuality = when (call.argument<String>("videoQuality")) {
+            "very_low"  -> VideoQuality.VERY_LOW
+            "low"       -> VideoQuality.LOW
+            "medium"    -> VideoQuality.MEDIUM
+            "high"      -> VideoQuality.HIGH
+            "very_high" -> VideoQuality.VERY_HIGH
+            else        -> VideoQuality.MEDIUM
+        }
+
+        Thread {
+            val retriever = MediaMetadataRetriever()
+            try {
+                val file = File(path)
+                if (!file.exists()) {
+                    postError(result, "VIDEO_NOT_FOUND", "The video file was not found: $path")
+                    return@Thread
+                }
+                retriever.setDataSource(file.absolutePath)
+
+                val srcWidth =
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toDoubleOrNull()
+                val srcHeight =
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toDoubleOrNull()
+                if (srcWidth == null || srcHeight == null || srcWidth <= 0 || srcHeight <= 0) {
+                    postError(result, "UNSUPPORTED_VIDEO", "The video has no readable video track.")
+                    return@Thread
+                }
+                val rotation =
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+                val durationSec =
+                    (retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L) / 1000.0
+                val sourceBitrate =
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toIntOrNull() ?: 0
+                val hasAudio =
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO) == "yes"
+                val originalSize = file.length()
+
+                // Output resolution — mirror Compressor: resizer/custom/source, then
+                // round to even/16, then swap on 90°/270°.
+                val rawWidth: Double
+                val rawHeight: Double
+                when {
+                    keepOriginalResolution -> { rawWidth = srcWidth; rawHeight = srcHeight }
+                    videoWidth != null && videoHeight != null -> {
+                        rawWidth = videoWidth.toDouble(); rawHeight = videoHeight.toDouble()
+                    }
+                    else -> {
+                        val p = CompressorUtils.autoResizePercentage(srcWidth, srcHeight)
+                        rawWidth = srcWidth * p; rawHeight = srcHeight * p
+                    }
+                }
+                var outWidth = roundDimension(rawWidth)
+                var outHeight = roundDimension(rawHeight)
+                if (rotation == 90 || rotation == 270) {
+                    val tmp = outWidth; outWidth = outHeight; outHeight = tmp
+                }
+
+                // Target video bitrate — the same value compression would request.
+                val targetBitrate =
+                    if (videoBitrateInMbps != null) videoBitrateInMbps * 1_000_000
+                    else CompressorUtils.getBitrate(sourceBitrate, quality)
+
+                val audioBitrate = if (disableAudio || !hasAudio) 0 else 128_000
+                val estimatedSize =
+                    ((targetBitrate + audioBitrate) / 8.0 * durationSec * 1.02).toLong()
+                val ratio =
+                    if (originalSize > 0)
+                        ((1 - estimatedSize.toDouble() / originalSize) * 100).coerceIn(0.0, 100.0)
+                    else 0.0
+
+                postSuccess(result, mapOf(
+                    "originalSizeBytes" to originalSize,
+                    "estimatedSizeBytes" to estimatedSize,
+                    "targetBitrate" to targetBitrate,
+                    "outputWidth" to outWidth,
+                    "outputHeight" to outHeight,
+                    "estimatedRatio" to ratio
+                ))
+            } catch (e: Exception) {
+                postError(result, "ESTIMATE_FAILED", e.message ?: "Failed to estimate compression result.")
             } finally {
                 try { retriever.release() } catch (ignored: Exception) {}
             }

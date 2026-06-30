@@ -29,6 +29,9 @@ class _SingleCompressViewState extends State<SingleCompressView>
   String? _sourcePath;
   MediaInfo? _info;
   String? _thumbnailPath;
+  CompressionEstimate? _estimate;
+  List<String> _thumbnails = const <String>[];
+  bool _thumbsLoading = false;
   OnSuccess? _result;
   String? _error;
   bool _runInBackground = false;
@@ -44,11 +47,14 @@ class _SingleCompressViewState extends State<SingleCompressView>
       _sourcePath = path;
       _info = null;
       _thumbnailPath = null;
+      _estimate = null;
+      _thumbnails = const <String>[];
       _result = null;
       _error = null;
     });
 
-    // Read metadata and grab a preview frame from the middle of the video.
+    // Read metadata, grab a preview frame from the middle of the video, and
+    // predict the compressed size (getCompressionEstimate runs no transcode).
     try {
       final info = await widget.compressor.getMediaInfo(path);
       final midpointMs = (info.duration ?? Duration.zero).inMilliseconds ~/ 2;
@@ -57,13 +63,47 @@ class _SingleCompressViewState extends State<SingleCompressView>
         positionInMs: midpointMs,
         quality: 80,
       );
+      final estimate = await widget.compressor.getCompressionEstimate(
+        path,
+        videoQuality: VideoQuality.medium,
+      );
       if (!mounted) return;
       setState(() {
         _info = info;
         _thumbnailPath = thumbnail;
+        _estimate = estimate;
       });
     } catch (e) {
-      debugPrint('Metadata/thumbnail failed: $e');
+      debugPrint('Metadata/thumbnail/estimate failed: $e');
+    }
+  }
+
+  /// Generates a strip of evenly-spaced thumbnails via [getVideoThumbnails]
+  /// (one native round-trip).
+  Future<void> _loadThumbnails() async {
+    final path = _sourcePath;
+    if (path == null) return;
+    setState(() => _thumbsLoading = true);
+
+    final totalMs = (_info?.duration ?? Duration.zero).inMilliseconds;
+    final requests = <ThumbnailRequest>[
+      for (int i = 0; i < 5; i++)
+        ThumbnailRequest(
+          positionInMs: totalMs > 0 ? (totalMs * i) ~/ 5 : 0,
+          quality: 60,
+        ),
+    ];
+    try {
+      final paths = await widget.compressor.getVideoThumbnails(path, requests);
+      if (!mounted) return;
+      setState(() {
+        _thumbnails = paths;
+        _thumbsLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _thumbsLoading = false);
+      debugPrint('Thumbnails failed: $e');
     }
   }
 
@@ -159,6 +199,18 @@ class _SingleCompressViewState extends State<SingleCompressView>
         if (_info != null || _thumbnailPath != null) ...[
           const SizedBox(height: 16),
           _PreviewCard(info: _info, thumbnailPath: _thumbnailPath),
+        ],
+        if (_estimate != null) ...[
+          const SizedBox(height: 12),
+          _EstimateCard(estimate: _estimate!),
+        ],
+        if (_sourcePath != null) ...[
+          const SizedBox(height: 12),
+          _ThumbnailStrip(
+            thumbnails: _thumbnails,
+            loading: _thumbsLoading,
+            onGenerate: _stage == _Stage.compressing ? null : _loadThumbnails,
+          ),
         ],
         const SizedBox(height: 16),
         ..._buildStage(context),
@@ -378,6 +430,121 @@ class _ResultCard extends StatelessWidget {
                 icon: const Icon(Icons.play_arrow),
                 label: const Text('Play'),
               ),
+            ],
+          ),
+        ),
+      );
+}
+
+/// Shows the pre-flight [CompressionEstimate] (predicted, no transcode).
+class _EstimateCard extends StatelessWidget {
+  const _EstimateCard({required this.estimate});
+
+  final CompressionEstimate estimate;
+
+  @override
+  Widget build(BuildContext context) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.calculate_outlined),
+                  SizedBox(width: 8),
+                  Text(
+                    'Estimated output',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Predicted size: ${formatBytes(estimate.estimatedSizeBytes, 2)}',
+              ),
+              Text(
+                'Resolution: ${estimate.outputWidth} × ${estimate.outputHeight}',
+              ),
+              Text(
+                'Bitrate: ${(estimate.targetBitrate / 1000000).toStringAsFixed(2)} Mbps',
+              ),
+              Text(
+                  'Reduction: ~${estimate.estimatedRatio.toStringAsFixed(0)}%'),
+              const SizedBox(height: 4),
+              const Text(
+                'Approximate — computed without transcoding (medium quality).',
+                style: TextStyle(fontSize: 12, color: Colors.black54),
+              ),
+            ],
+          ),
+        ),
+      );
+}
+
+/// A "Generate" button plus the resulting horizontal filmstrip, demonstrating
+/// [LightCompressor.getVideoThumbnails] (several frames in one call).
+class _ThumbnailStrip extends StatelessWidget {
+  const _ThumbnailStrip({
+    required this.thumbnails,
+    required this.loading,
+    required this.onGenerate,
+  });
+
+  final List<String> thumbnails;
+  final bool loading;
+  final VoidCallback? onGenerate;
+
+  @override
+  Widget build(BuildContext context) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Thumbnails',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  TextButton.icon(
+                    onPressed: loading ? null : onGenerate,
+                    icon: const Icon(Icons.burst_mode_outlined, size: 18),
+                    label: const Text('Generate'),
+                  ),
+                ],
+              ),
+              if (loading)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (thumbnails.isEmpty)
+                const Text(
+                  'Extract several frames in one call (getVideoThumbnails).',
+                  style: TextStyle(fontSize: 13, color: Colors.black54),
+                )
+              else
+                SizedBox(
+                  height: 72,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: thumbnails.length,
+                    separatorBuilder: (BuildContext context, int index) =>
+                        const SizedBox(width: 8),
+                    itemBuilder: (BuildContext context, int index) => ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: Image.file(
+                        File(thumbnails[index]),
+                        width: 108,
+                        height: 72,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),

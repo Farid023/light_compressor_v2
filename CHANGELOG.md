@@ -1,5 +1,17 @@
 # Changelog
 
+# 1.5.0
+
+### New
+
+- **`getCompressionEstimate()`** — predict a compression's output (size, bitrate, output resolution, % reduction) **without transcoding**, via the new `CompressionEstimate` model. It reuses the same bitrate/resize math the compressor uses, so the figures track the real output (approximate — single-pass).
+- **`getVideoThumbnails()`** — extract several frames in a single native round-trip, returning the JPEG paths in request order, via the new `ThumbnailRequest` model. More efficient than calling `getVideoThumbnail` repeatedly.
+- **`isCompressing()`** — query whether a compression (single or batch) is currently running (e.g. to gate UI).
+- New **`EstimateException`** (extends `LightCompressorException`) for estimate failures.
+- Example app gains a pre-flight **estimate** card and a multi-thumbnail **filmstrip** in the single-video flow.
+
+All additions are additive and fully backward compatible — existing APIs are unchanged.
+
 # 1.4.0
 
 ### New

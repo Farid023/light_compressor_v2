@@ -8,6 +8,7 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
 
     private var eventSink: FlutterEventSink?
     private var compression: Compression?
+    private var running = false
     private let batchStreamHandler = BatchStreamHandler()
 
     // MARK: - FlutterPlugin
@@ -47,6 +48,12 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
             getMediaInfo(call: call, result: result)
         case "getVideoThumbnail":
             getVideoThumbnail(call: call, result: result)
+        case "getVideoThumbnails":
+            getVideoThumbnails(call: call, result: result)
+        case "getCompressionEstimate":
+            getCompressionEstimate(call: call, result: result)
+        case "isCompressing":
+            result(running)
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -104,16 +111,18 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
         // completion (onCancelled is signalled from a background queue), so funnel
         // every terminal reply through this guard on the main thread.
         var didReply = false
-        let replyOnce: (Any?) -> Void = { payload in
+        let replyOnce: (Any?) -> Void = { [weak self] payload in
             DispatchQueue.main.async {
                 guard !didReply else { return }
                 didReply = true
+                self?.running = false
                 result(payload)
             }
         }
 
         let videoFormat = VideoFormat.from(wire: args["videoFormat"] as? String)
 
+        running = true
         compression = LightCompressor().compressVideo(
             videos: [
                 .init(
@@ -253,11 +262,13 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
                 event["index"] = index
                 self.batchStreamHandler.eventSink?(event)
                 if completed == count {
+                    self.running = false
                     result(results.map { $0 ?? ["onFailure": "Unknown error"] })
                 }
             }
         }
 
+        running = true
         compression = LightCompressor().compressVideo(
             videos: videos,
             progressQueue: .main,
@@ -369,6 +380,59 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
             } catch {
                 DispatchQueue.main.async {
                     result(Self.flutterError(from: error, fallbackCode: "THUMBNAIL_FAILED"))
+                }
+            }
+        }
+    }
+
+    private func getVideoThumbnails(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any?],
+              let path = args["path"] as? String else {
+            result(FlutterError(code: "VIDEO_NOT_FOUND", message: "No video path was provided.", details: nil))
+            return
+        }
+        let requests = (args["requests"] as? [[String: Any]]) ?? []
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let paths = try LightCompressor.thumbnails(for: path, requests: requests)
+                DispatchQueue.main.async { result(paths) }
+            } catch {
+                DispatchQueue.main.async {
+                    result(Self.flutterError(from: error, fallbackCode: "THUMBNAIL_FAILED"))
+                }
+            }
+        }
+    }
+
+    private func getCompressionEstimate(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any?],
+              let path = args["path"] as? String,
+              let videoQuality = args["videoQuality"] as? String else {
+            result(FlutterError(code: "VIDEO_NOT_FOUND", message: "No video path was provided.", details: nil))
+            return
+        }
+        let quality = getVideoQuality(quality: videoQuality)
+        let keepOriginalResolution = (args["keepOriginalResolution"] as? Bool) ?? false
+        let disableAudio = (args["disableAudio"] as? Bool) ?? false
+        let videoBitrateInMbps = args["videoBitrateInMbps"] as? Int
+        let videoWidth = args["videoWidth"] as? Int
+        let videoHeight = args["videoHeight"] as? Int
+        let videoSize: CGSize? = videoWidth != nil && videoHeight != nil
+            ? CGSize(width: videoWidth!, height: videoHeight!)
+            : nil
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let estimate = try LightCompressor().estimate(
+                    for: path,
+                    quality: quality,
+                    keepOriginalResolution: keepOriginalResolution,
+                    videoSize: videoSize,
+                    videoBitrateInMbps: videoBitrateInMbps,
+                    disableAudio: disableAudio)
+                DispatchQueue.main.async { result(estimate) }
+            } catch {
+                DispatchQueue.main.async {
+                    result(Self.flutterError(from: error, fallbackCode: "ESTIMATE_FAILED"))
                 }
             }
         }

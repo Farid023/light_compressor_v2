@@ -49,3 +49,11 @@ class ThumbnailException extends LightCompressorException {
     super.message = 'Failed to generate a thumbnail from the video.',
   ]);
 }
+
+/// Thrown when a compression estimate could not be computed for the video.
+class EstimateException extends LightCompressorException {
+  /// Creates an [EstimateException] with an optional custom message.
+  const EstimateException([
+    super.message = 'Failed to estimate the compression result for the video.',
+  ]);
+}

@@ -439,6 +439,91 @@ class LightCompressor {
     }
   }
 
+  /// Generates several thumbnails from the video at [path] in a single native
+  /// round-trip, returning their file paths **in the same order** as [requests].
+  ///
+  /// More efficient than calling [getVideoThumbnail] repeatedly: the native side
+  /// opens the source once and extracts every requested frame from it.
+  ///
+  /// Each image is written to a temporary directory; use [clearCache] to remove
+  /// generated files when they are no longer needed.
+  ///
+  /// Throws a [VideoNotFoundException] if the file does not exist,
+  /// a [PermissionDeniedException] if it cannot be accessed, or a
+  /// [ThumbnailException] if no frames could be extracted.
+  Future<List<String>> getVideoThumbnails(
+    String path,
+    List<ThumbnailRequest> requests,
+  ) async {
+    try {
+      final List<String>? paths = await _channel
+          .invokeListMethod<String>('getVideoThumbnails', <String, dynamic>{
+            'path': path,
+            'requests': requests
+                .map((ThumbnailRequest request) => request.toMap())
+                .toList(),
+          });
+      if (paths == null) {
+        throw const ThumbnailException();
+      }
+      return paths;
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(
+        e,
+        ThumbnailException(e.message ?? _defaultThumbnailMessage),
+      );
+    }
+  }
+
+  /// Estimates the result of compressing the video at [path] **without**
+  /// transcoding it, using the same bitrate and resize math the compressor
+  /// uses. The figures are approximate (typically within ~30% for single-pass).
+  ///
+  /// The parameters mirror the ones on [compressVideo] that affect the output
+  /// size: [videoQuality], [videoFormat], [keepOriginalResolution], a custom
+  /// [videoWidth]/[videoHeight], a [videoBitrateInMbps] override, and
+  /// [disableAudio].
+  ///
+  /// Throws a [VideoNotFoundException] if the file does not exist,
+  /// an [UnsupportedVideoException] if it cannot be read, or an
+  /// [EstimateException] if the estimate could not be computed.
+  Future<CompressionEstimate> getCompressionEstimate(
+    String path, {
+    required VideoQuality videoQuality,
+    VideoFormat videoFormat = VideoFormat.h264,
+    bool keepOriginalResolution = false,
+    int? videoWidth,
+    int? videoHeight,
+    int? videoBitrateInMbps,
+    bool disableAudio = false,
+  }) async {
+    try {
+      final Map<dynamic, dynamic>? result = await _channel
+          .invokeMapMethod<dynamic, dynamic>(
+            'getCompressionEstimate',
+            <String, dynamic>{
+              'path': path,
+              'videoQuality': videoQuality.toString().split('.').last,
+              'videoFormat': videoFormat.name,
+              'keepOriginalResolution': keepOriginalResolution,
+              'videoWidth': videoWidth,
+              'videoHeight': videoHeight,
+              'videoBitrateInMbps': videoBitrateInMbps,
+              'disableAudio': disableAudio,
+            },
+          );
+      if (result == null) {
+        throw const EstimateException();
+      }
+      return CompressionEstimate.fromMap(Map<String, dynamic>.from(result));
+    } on PlatformException catch (e) {
+      throw _mapPlatformException(
+        e,
+        EstimateException(e.message ?? _defaultEstimateMessage),
+      );
+    }
+  }
+
   /// Maps a native [PlatformException] code onto a typed exception, falling
   /// back to [fallback] for codes that are not specifically recognized.
   LightCompressorException _mapPlatformException(
@@ -463,6 +548,8 @@ class LightCompressor {
 
   static const String _defaultMediaInfoMessage =
       'Failed to read media information from the video.';
+  static const String _defaultEstimateMessage =
+      'Failed to estimate the compression result for the video.';
   static const String _defaultThumbnailMessage =
       'Failed to generate a thumbnail from the video.';
   static const String _defaultPermissionMessage =
@@ -495,4 +582,13 @@ class LightCompressor {
   /// may still resolve to [OnSuccess] or [OnFailure].
   Future<void> cancelCompression() =>
       _channel.invokeMethod<void>('cancelCompression');
+
+  /// Whether a compression (single or batch) is currently running.
+  ///
+  /// Useful for gating UI (e.g. disabling a "compress" button) without tracking
+  /// the in-flight [compressVideo] / [compressVideos] future yourself.
+  Future<bool> isCompressing() async {
+    final bool? running = await _channel.invokeMethod<bool>('isCompressing');
+    return running ?? false;
+  }
 }
