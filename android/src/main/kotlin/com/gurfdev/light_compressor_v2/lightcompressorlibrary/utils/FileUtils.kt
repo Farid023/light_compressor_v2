@@ -2,12 +2,15 @@ package com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils
 
 import android.content.ContentValues
 import android.content.Context
+import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.annotation.RequiresApi
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 
+@RequiresApi(Build.VERSION_CODES.Q)
 fun saveVideoInExternal(
     context: Context,
     videoFileName: String,
