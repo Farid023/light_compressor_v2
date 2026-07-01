@@ -30,9 +30,10 @@ public enum CompressionResult {
     /// Compression has started.
     case onStart
     /// Compression succeeded. Contains the video index, output URL, video
-    /// duration in seconds, and the codec actually used (which may differ from
-    /// the requested one if H.265 fell back to H.264).
-    case onSuccess(Int, URL, Double, VideoFormat)
+    /// duration in seconds, the codec actually used (which may differ from the
+    /// requested one if H.265 fell back to H.264), whether a requested target
+    /// output size was met, and the number of encode passes run (1 or 2).
+    case onSuccess(Int, URL, Double, VideoFormat, Bool, Int)
     /// Compression failed. Contains the video index and error.
     case onFailure(Int, CompressionError)
     /// Compression was cancelled by the user.
@@ -112,10 +113,15 @@ public struct LightCompressor {
             public let quality: VideoQuality
             public let isMinBitrateCheckEnabled: Bool
             public let videoBitrateInMbps: Int?
+            public let targetSizeBytes: Int?
+            public let videoFps: Int?
+            public let audioBitrate: Int?
+            public let audioSampleRate: Int?
             public let disableAudio: Bool
             public let keepOriginalResolution: Bool
             public let videoSize: CGSize?
             public let videoFormat: VideoFormat
+            public let twoPass: Bool
 
             public init(
                 quality: VideoQuality = .medium,
@@ -124,15 +130,25 @@ public struct LightCompressor {
                 disableAudio: Bool = false,
                 keepOriginalResolution: Bool = false,
                 videoSize: CGSize? = nil,
-                videoFormat: VideoFormat = .h264
+                videoFormat: VideoFormat = .h264,
+                targetSizeBytes: Int? = nil,
+                videoFps: Int? = nil,
+                audioBitrate: Int? = nil,
+                audioSampleRate: Int? = nil,
+                twoPass: Bool = false
             ) {
                 self.quality = quality
                 self.isMinBitrateCheckEnabled = isMinBitrateCheckEnabled
                 self.videoBitrateInMbps = videoBitrateInMbps
+                self.targetSizeBytes = targetSizeBytes
+                self.videoFps = videoFps
+                self.audioBitrate = audioBitrate
+                self.audioSampleRate = audioSampleRate
                 self.disableAudio = disableAudio
                 self.keepOriginalResolution = keepOriginalResolution
                 self.videoSize = videoSize
                 self.videoFormat = videoFormat
+                self.twoPass = twoPass
             }
         }
 
@@ -156,6 +172,10 @@ public struct LightCompressor {
     private static let MIN_BITRATE = Float(2_000_000)
     private static let MIN_HEIGHT  = 640.0
     private static let MIN_WIDTH   = 360.0
+
+    /// Phase 8d: a two-pass run triggers a corrective second pass only when the
+    /// first pass overshoots the target by more than this fraction.
+    private static let TWO_PASS_TOLERANCE = 0.10
 
     // MARK: - Init
 
@@ -410,9 +430,6 @@ public struct LightCompressor {
         guard !videos.isEmpty else { return compressionOperation }
 
         for (index, video) in videos.enumerated() {
-            // Reset frame count per video so progress is accurate.
-            var frameCount = 0
-
             let source        = video.source
             let destination   = video.destination
             let configuration = video.configuration
@@ -436,10 +453,6 @@ public struct LightCompressor {
                 continue
             }
 
-            let newBitrate = configuration.videoBitrateInMbps == nil
-                ? getBitrate(bitrate: bitrate, quality: configuration.quality)
-                : configuration.videoBitrateInMbps! * 1_000_000
-
             let videoSize = videoTrack.naturalSize
             let size: (width: Int, height: Int) = configuration.videoSize == nil
                 ? generateWidthAndHeight(
@@ -449,113 +462,321 @@ public struct LightCompressor {
                 : (Int(configuration.videoSize!.width), Int(configuration.videoSize!.height))
 
             let durationInSeconds = videoAsset.duration.seconds
+
+            // Choose the target video bitrate. Precedence: an explicit
+            // videoBitrateInMbps wins; else a requested target output size is
+            // solved for (computed after `size` so the floor scales to the
+            // output resolution); else the quality preset is used.
+            var targetSizeMet = true
+            let newBitrate: Int
+            if let mbps = configuration.videoBitrateInMbps {
+                newBitrate = mbps * 1_000_000
+            } else if let targetBytes = configuration.targetSizeBytes {
+                let solved = solveTargetBitrate(
+                    targetSizeBytes: targetBytes,
+                    durationSeconds: durationInSeconds,
+                    sourceBitrate: bitrate,
+                    disableAudio: configuration.disableAudio,
+                    hasAudio: !videoAsset.tracks(withMediaType: .audio).isEmpty)
+                newBitrate = solved.bitrate
+                targetSizeMet = solved.met
+            } else {
+                newBitrate = getBitrate(bitrate: bitrate, quality: configuration.quality)
+            }
+
             let frameRate         = videoTrack.nominalFrameRate
             let totalFrames       = ceil(durationInSeconds * Double(frameRate))
-            let progress          = Progress(totalUnitCount: Int64(totalFrames))
+
+            // Frame-rate downsampling (8b): drop frames toward videoFps when it
+            // is below the source rate (never duplicate). Disabled otherwise.
+            let sourceFps = Double(frameRate)
+            let frameDropEnabled = configuration.videoFps != nil
+                && configuration.videoFps! > 0
+                && (sourceFps <= 0 || Double(configuration.videoFps!) < sourceFps)
+            let frameIntervalSeconds =
+                frameDropEnabled ? 1.0 / Double(configuration.videoFps!) : 0.0
 
             // Resolve the output codec: use H.265 only when requested AND the
             // device supports HEVC encoding; otherwise fall back to H.264.
             let resolvedFormat: VideoFormat =
                 (configuration.videoFormat == .h265 && Self.isHEVCEncodingSupported()) ? .h265 : .h264
 
-            // Video writer
-            let videoWriterInput = AVAssetWriterInput(
-                mediaType: .video,
-                outputSettings: getVideoWriterSettings(
-                    bitrate: newBitrate,
-                    width: size.width,
-                    height: size.height,
-                    format: resolvedFormat))
-            videoWriterInput.expectsMediaDataInRealTime = true
-            videoWriterInput.transform = videoTrack.preferredTransform
+            // Phase 8d: two-pass. Enabled only when requested AND a target size
+            // was set AND it is reachable (a floor-bound pass 1 can't be improved
+            // by a lower bitrate). Pass 1 encodes at the solved bitrate; if it
+            // overshoots, pass 2 re-encodes at a corrected (lower) bitrate.
+            let twoPassEnabled =
+                configuration.twoPass && configuration.targetSizeBytes != nil && targetSizeMet
+            let targetBytes = configuration.targetSizeBytes ?? 0
+            let floor = min(Double(Self.MIN_BITRATE), Double(bitrate))
 
-            // .mp4 container to match the .mp4 output filename — important for
-            // HEVC interop with players/Android that key off the extension.
-            guard let videoWriter = try? AVAssetWriter(outputURL: destination, fileType: .mp4) else {
-                completion(.onFailure(index, CompressionError(title: "Failed to create video writer")))
-                continue
-            }
-            videoWriter.add(videoWriterInput)
-
-            // Video reader
-            let videoReaderSettings: [String: AnyObject] = [
-                kCVPixelBufferPixelFormatTypeKey as String:
-                    Int(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) as AnyObject
-            ]
-            let videoReaderOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: videoReaderSettings)
-
-            guard let videoReader = try? AVAssetReader(asset: videoAsset) else {
-                completion(.onFailure(index, CompressionError(title: "Failed to create video reader")))
-                continue
-            }
-            videoReader.add(videoReaderOutput)
-
-            // Audio setup — only wire up an audio input when there is audio to
-            // copy and it isn't disabled. Adding an input that is never fed and
-            // never marked finished can stall AVAssetWriter.finishWriting.
-            let audioTrack = configuration.disableAudio
-                ? nil
-                : videoAsset.tracks(withMediaType: .audio).first
-            var audioWriterInput: AVAssetWriterInput?
-            var audioReader: AVAssetReader?
-            var audioReaderOutput: AVAssetReaderTrackOutput?
-            if let audioTrack {
-                let input = AVAssetWriterInput(mediaType: .audio, outputSettings: nil)
-                input.expectsMediaDataInRealTime = false
-                videoWriter.add(input)
-                audioWriterInput = input
-                audioReaderOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
-                audioReader = try? AVAssetReader(asset: videoAsset)
-                audioReader?.add(audioReaderOutput!)
+            // Reports the terminal result for this video.
+            func finish(_ outcome: PassOutcome, passesUsed: Int) {
+                switch outcome {
+                case .cancelled:
+                    completion(.onCancelled)
+                case .failure(let error):
+                    completion(.onFailure(index, error))
+                case .success(let url):
+                    completion(.onSuccess(
+                        index, url, durationInSeconds, resolvedFormat,
+                        targetSizeMet, passesUsed))
+                }
             }
 
-            videoWriter.startWriting()
-            videoReader.startReading()
-            videoWriter.startSession(atSourceTime: .zero)
+            // Pass 1.
+            encodePass(
+                index: index, videoAsset: videoAsset, videoTrack: videoTrack,
+                size: size, bitrate: newBitrate, resolvedFormat: resolvedFormat,
+                frameDropEnabled: frameDropEnabled,
+                frameIntervalSeconds: frameIntervalSeconds, totalFrames: totalFrames,
+                configuration: configuration, destination: destination,
+                compressionOperation: compressionOperation,
+                progressQueue: progressQueue, progressHandler: progressHandler
+            ) { outcome in
+                guard case .success(let url) = outcome else {
+                    finish(outcome, passesUsed: 1)
+                    return
+                }
 
-            var isFirstBuffer = true
-            let processingQueue = DispatchQueue(label: "processingQueue1", qos: .background)
+                // Decide whether a corrective second pass is warranted.
+                let actualBytes = Self.fileSize(url)
+                guard twoPassEnabled,
+                      !compressionOperation.cancel,
+                      Double(actualBytes) > Double(targetBytes) * (1.0 + Self.TWO_PASS_TOLERANCE)
+                else {
+                    finish(.success(url), passesUsed: 1)
+                    return
+                }
+                let adjusted = min(
+                    max(Double(newBitrate) * Double(targetBytes) / Double(actualBytes), floor),
+                    Double(bitrate))
+                // Skip pass 2 when it can't lower the bitrate (already at floor).
+                guard Int(adjusted) < newBitrate else {
+                    finish(.success(url), passesUsed: 1)
+                    return
+                }
 
-            videoWriterInput.requestMediaDataWhenReady(on: processingQueue) {
-                while videoWriterInput.isReadyForMoreMediaData {
+                // Pass 2 writes to a temp; the valid pass-1 output is kept until
+                // pass 2 succeeds, then replaced.
+                let tempDest = destination.deletingPathExtension()
+                    .appendingPathExtension("p2").appendingPathExtension("mp4")
+                try? FileManager.default.removeItem(at: tempDest)
 
-                    // Handle cancellation
-                    if compressionOperation.cancel {
-                        videoReader.cancelReading()
-                        videoWriter.cancelWriting()
+                self.encodePass(
+                    index: index, videoAsset: videoAsset, videoTrack: videoTrack,
+                    size: size, bitrate: Int(adjusted), resolvedFormat: resolvedFormat,
+                    frameDropEnabled: frameDropEnabled,
+                    frameIntervalSeconds: frameIntervalSeconds, totalFrames: totalFrames,
+                    configuration: configuration, destination: tempDest,
+                    compressionOperation: compressionOperation,
+                    progressQueue: progressQueue, progressHandler: progressHandler
+                ) { outcome2 in
+                    switch outcome2 {
+                    case .cancelled:
+                        try? FileManager.default.removeItem(at: tempDest)
                         completion(.onCancelled)
-                        return
+                    case .failure:
+                        // Pass 2 failed — keep the valid pass-1 output.
+                        try? FileManager.default.removeItem(at: tempDest)
+                        finish(.success(destination), passesUsed: 2)
+                    case .success:
+                        try? FileManager.default.removeItem(at: destination)
+                        try? FileManager.default.moveItem(at: tempDest, to: destination)
+                        finish(.success(destination), passesUsed: 2)
                     }
+                }
+            }
+        }
 
-                    // Update progress
-                    frameCount += 1
-                    if let handler = progressHandler {
-                        progress.completedUnitCount = Int64(frameCount)
-                        progressQueue.async { handler(index, progress) }
-                    }
+        return compressionOperation
+    }
 
-                    let sampleBuffer = videoReaderOutput.copyNextSampleBuffer()
+    // MARK: - Two-pass support (Phase 8d)
 
-                    if videoReader.status == .reading, let sampleBuffer {
+    /// The outcome of a single transcode pass.
+    private enum PassOutcome {
+        case success(URL)
+        case failure(CompressionError)
+        case cancelled
+    }
+
+    /// File size in bytes at [url], or 0 when it cannot be read.
+    private static func fileSize(_ url: URL) -> Int {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int ?? 0
+    }
+
+    /// Runs one full transcode pass at [bitrate], writing to [destination], and
+    /// reports the outcome via [onPassComplete]. Phase 8d calls this once, or a
+    /// second time at a corrected bitrate when the first pass overshot the target.
+    /// Progress is reported as 0..<100 (never the terminal 100) so a two-pass run
+    /// does not signal "done" between passes; completion is the `onPassComplete`
+    /// callback, mirroring Android.
+    private func encodePass(
+        index: Int,
+        videoAsset: AVURLAsset,
+        videoTrack: AVAssetTrack,
+        size: (width: Int, height: Int),
+        bitrate: Int,
+        resolvedFormat: VideoFormat,
+        frameDropEnabled: Bool,
+        frameIntervalSeconds: Double,
+        totalFrames: Double,
+        configuration: Video.Configuration,
+        destination: URL,
+        compressionOperation: Compression,
+        progressQueue: DispatchQueue,
+        progressHandler: ((Int, Progress) -> Void)?,
+        onPassComplete: @escaping (PassOutcome) -> Void
+    ) {
+        var frameCount = 0
+        let progress = Progress(totalUnitCount: Int64(totalFrames))
+        var nextEmitSeconds = 0.0
+        // Cap progress just below the total so fractionCompleted never reaches
+        // 1.0 (100%); the terminal signal is onPassComplete, not a 100 event.
+        let progressCap = max(Int64(totalFrames) - 1, 0)
+
+        // Video writer
+        let videoWriterInput = AVAssetWriterInput(
+            mediaType: .video,
+            outputSettings: getVideoWriterSettings(
+                bitrate: bitrate,
+                width: size.width,
+                height: size.height,
+                format: resolvedFormat))
+        videoWriterInput.expectsMediaDataInRealTime = true
+        videoWriterInput.transform = videoTrack.preferredTransform
+
+        // .mp4 container to match the .mp4 output filename — important for
+        // HEVC interop with players/Android that key off the extension.
+        guard let videoWriter = try? AVAssetWriter(outputURL: destination, fileType: .mp4) else {
+            onPassComplete(.failure(CompressionError(title: "Failed to create video writer")))
+            return
+        }
+        videoWriter.add(videoWriterInput)
+
+        // Video reader
+        let videoReaderSettings: [String: AnyObject] = [
+            kCVPixelBufferPixelFormatTypeKey as String:
+                Int(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) as AnyObject
+        ]
+        let videoReaderOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: videoReaderSettings)
+
+        guard let videoReader = try? AVAssetReader(asset: videoAsset) else {
+            onPassComplete(.failure(CompressionError(title: "Failed to create video reader")))
+            return
+        }
+        videoReader.add(videoReaderOutput)
+
+        // Audio setup — only wire up an audio input when there is audio to
+        // copy and it isn't disabled. Adding an input that is never fed and
+        // never marked finished can stall AVAssetWriter.finishWriting.
+        let audioTrack = configuration.disableAudio
+            ? nil
+            : videoAsset.tracks(withMediaType: .audio).first
+        // Re-encode the audio to AAC when a bitrate/sample-rate was requested
+        // (8c); otherwise copy the source samples through untouched (nil).
+        let reEncodeAudio = !configuration.disableAudio
+            && (configuration.audioBitrate != nil
+                || configuration.audioSampleRate != nil)
+        var audioWriterInput: AVAssetWriterInput?
+        var audioReader: AVAssetReader?
+        var audioReaderOutput: AVAssetReaderTrackOutput?
+        if let audioTrack {
+            var writerSettings: [String: Any]?
+            var readerSettings: [String: Any]?
+            if reEncodeAudio {
+                // Default channels + sample rate from the source track.
+                var channels = 2
+                var srcSampleRate = 44100.0
+                let descs = audioTrack.formatDescriptions as! [CMAudioFormatDescription]
+                if let desc = descs.first,
+                    let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(
+                        desc)?.pointee {
+                    if asbd.mChannelsPerFrame > 0 { channels = Int(asbd.mChannelsPerFrame) }
+                    if asbd.mSampleRate > 0 { srcSampleRate = asbd.mSampleRate }
+                }
+                var aac: [String: Any] = [
+                    AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                    AVNumberOfChannelsKey: channels,
+                    AVSampleRateKey: configuration.audioSampleRate ?? Int(srcSampleRate),
+                ]
+                if let bitrate = configuration.audioBitrate {
+                    aac[AVEncoderBitRateKey] = bitrate
+                }
+                writerSettings = aac
+                // The reader must decompress to PCM so the writer can re-encode.
+                readerSettings = [AVFormatIDKey: Int(kAudioFormatLinearPCM)]
+            }
+            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: writerSettings)
+            input.expectsMediaDataInRealTime = false
+            videoWriter.add(input)
+            audioWriterInput = input
+            audioReaderOutput = AVAssetReaderTrackOutput(
+                track: audioTrack, outputSettings: readerSettings)
+            audioReader = try? AVAssetReader(asset: videoAsset)
+            audioReader?.add(audioReaderOutput!)
+        }
+
+        videoWriter.startWriting()
+        videoReader.startReading()
+        videoWriter.startSession(atSourceTime: .zero)
+
+        var isFirstBuffer = true
+        let processingQueue = DispatchQueue(label: "processingQueue1", qos: .background)
+
+        videoWriterInput.requestMediaDataWhenReady(on: processingQueue) {
+            while videoWriterInput.isReadyForMoreMediaData {
+
+                // Handle cancellation
+                if compressionOperation.cancel {
+                    videoReader.cancelReading()
+                    videoWriter.cancelWriting()
+                    onPassComplete(.cancelled)
+                    return
+                }
+
+                // Update progress (capped just below 100%).
+                frameCount += 1
+                if let handler = progressHandler {
+                    progress.completedUnitCount = min(Int64(frameCount), progressCap)
+                    progressQueue.async { handler(index, progress) }
+                }
+
+                let sampleBuffer = videoReaderOutput.copyNextSampleBuffer()
+
+                if videoReader.status == .reading, let sampleBuffer {
+                    // Frame-rate downsampling (8b): append the frame only once
+                    // its timestamp reaches the next emit point; otherwise drop
+                    // it (don't append) so it never reaches the encoder.
+                    let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
+                    if !frameDropEnabled || !pts.isFinite || pts >= nextEmitSeconds {
+                        if frameDropEnabled { nextEmitSeconds += frameIntervalSeconds }
                         videoWriterInput.append(sampleBuffer)
-                    } else {
-                        videoWriterInput.markAsFinished()
+                    }
+                } else {
+                    videoWriterInput.markAsFinished()
 
-                        guard videoReader.status == .completed else { return }
+                    guard videoReader.status == .completed else { return }
 
-                        if let audioReader, let audioReaderOutput, let audioWriterInput,
-                           audioReader.status != .reading, audioReader.status != .completed {
+                    if let audioReader, let audioReaderOutput, let audioWriterInput,
+                       audioReader.status != .reading, audioReader.status != .completed {
 
-                            audioReader.startReading()
-                            videoWriter.startSession(atSourceTime: .zero)
+                        audioReader.startReading()
+                        videoWriter.startSession(atSourceTime: .zero)
 
-                            let audioQueue = DispatchQueue(label: "processingQueue2", qos: .background)
-                            audioWriterInput.requestMediaDataWhenReady(on: audioQueue) {
-                                while audioWriterInput.isReadyForMoreMediaData {
-                                    let audioBuffer = audioReaderOutput.copyNextSampleBuffer()
+                        let audioQueue = DispatchQueue(label: "processingQueue2", qos: .background)
+                        audioWriterInput.requestMediaDataWhenReady(on: audioQueue) {
+                            while audioWriterInput.isReadyForMoreMediaData {
+                                let audioBuffer = audioReaderOutput.copyNextSampleBuffer()
 
-                                    if audioReader.status == .reading, let audioBuffer {
-                                        if isFirstBuffer {
+                                if audioReader.status == .reading, let audioBuffer {
+                                    if isFirstBuffer {
+                                        // AAC passthrough: trim the encoder
+                                        // priming samples at the start. When
+                                        // re-encoding, the writer's encoder
+                                        // handles priming itself.
+                                        if !reEncodeAudio {
                                             let dict = CMTimeCopyAsDictionary(
                                                 CMTimeMake(value: 1024, timescale: 44100),
                                                 allocator: kCFAllocatorDefault)
@@ -564,33 +785,33 @@ public struct LightCompressor {
                                                 key: kCMSampleBufferAttachmentKey_TrimDurationAtStart,
                                                 value: dict,
                                                 attachmentMode: kCMAttachmentMode_ShouldNotPropagate)
-                                            isFirstBuffer = false
                                         }
-                                        audioWriterInput.append(audioBuffer)
-                                    } else {
-                                        audioWriterInput.markAsFinished()
-                                        videoWriter.finishWriting {
-                                            DispatchQueue.main.async {
-                                                if videoWriter.status == .completed {
-                                                    completion(.onSuccess(index, destination, durationInSeconds, resolvedFormat))
-                                                } else {
-                                                    completion(.onFailure(index, CompressionError(
-                                                        title: videoWriter.error?.localizedDescription ?? "Video writing failed")))
-                                                }
+                                        isFirstBuffer = false
+                                    }
+                                    audioWriterInput.append(audioBuffer)
+                                } else {
+                                    audioWriterInput.markAsFinished()
+                                    videoWriter.finishWriting {
+                                        DispatchQueue.main.async {
+                                            if videoWriter.status == .completed {
+                                                onPassComplete(.success(destination))
+                                            } else {
+                                                onPassComplete(.failure(CompressionError(
+                                                    title: videoWriter.error?.localizedDescription ?? "Video writing failed")))
                                             }
                                         }
                                     }
                                 }
                             }
-                        } else {
-                            videoWriter.finishWriting {
-                                DispatchQueue.main.async {
-                                    if videoWriter.status == .completed {
-                                        completion(.onSuccess(index, destination, durationInSeconds, resolvedFormat))
-                                    } else {
-                                        completion(.onFailure(index, CompressionError(
-                                            title: videoWriter.error?.localizedDescription ?? "Video writing failed")))
-                                    }
+                        }
+                    } else {
+                        videoWriter.finishWriting {
+                            DispatchQueue.main.async {
+                                if videoWriter.status == .completed {
+                                    onPassComplete(.success(destination))
+                                } else {
+                                    onPassComplete(.failure(CompressionError(
+                                        title: videoWriter.error?.localizedDescription ?? "Video writing failed")))
                                 }
                             }
                         }
@@ -598,8 +819,6 @@ public struct LightCompressor {
                 }
             }
         }
-
-        return compressionOperation
     }
 
     // MARK: - Private helpers
@@ -612,6 +831,33 @@ public struct LightCompressor {
         case .low:       return Int(bitrate * 0.2)
         case .very_low:  return Int(bitrate * 0.1)
         }
+    }
+
+    /// Solves for the video bitrate (bps) that lands the output at/under
+    /// [targetSizeBytes], reserving room for audio (a 128 kbps estimate) + ~3%
+    /// container overhead, then clamps to a resolution-scaled floor (so HD is
+    /// not crushed) capped at the source bitrate (never upscale). `met` is false
+    /// when the floor forced the output above the requested size.
+    private func solveTargetBitrate(
+        targetSizeBytes: Int,
+        durationSeconds: Double,
+        sourceBitrate: Float,
+        disableAudio: Bool,
+        hasAudio: Bool
+    ) -> (bitrate: Int, met: Bool) {
+        let audioBps = (disableAudio || !hasAudio) ? 0.0 : 128_000.0
+        let totalBudgetBits = Double(targetSizeBytes) * 8.0
+        let audioBits = audioBps * durationSeconds
+        let videoBudgetBits = totalBudgetBits * 0.97 - audioBits
+        let solvedBps = durationSeconds > 0 ? videoBudgetBits / durationSeconds : 0.0
+        let source = Double(sourceBitrate)
+        // Quality floor: keep at least MIN_BITRATE but never exceed the source
+        // (a sub-floor source can't be compressed further). A target below this
+        // lands at the floor and reports met = false.
+        let floor = min(Double(Self.MIN_BITRATE), source)
+        let met = solvedBps >= floor
+        let clamped = min(max(solvedBps, floor), source)
+        return (Int(clamped), met)
     }
 
     private func generateWidthAndHeight(
@@ -656,6 +902,11 @@ public struct LightCompressor {
     }
 
     private func getVideoWriterSettings(bitrate: Int, width: Int, height: Int, format: VideoFormat) -> [String: AnyObject] {
+        // NOTE: the frame rate is reduced by actually dropping source frames in
+        // the writer loop (see frameDropEnabled). We deliberately do NOT set
+        // AVVideoExpectedSourceFrameRateKey / AVVideoAverageNonDroppableFrameRateKey
+        // here — they are only encoder hints, and the iOS simulator's software
+        // encoder stalls when they are present, hanging the compression.
         let compressionSettings: [String: AnyObject] = [
             AVVideoAverageBitRateKey: bitrate as AnyObject
         ]

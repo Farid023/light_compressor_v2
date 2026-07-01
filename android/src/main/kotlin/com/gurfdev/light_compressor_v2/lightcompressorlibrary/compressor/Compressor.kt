@@ -29,6 +29,10 @@ object Compressor {
     // 2Mbps
     private const val MIN_BITRATE = 2000000
 
+    // Phase 8d: a two-pass run triggers a corrective second pass only when the
+    // first pass overshoots the target by more than this fraction.
+    private const val TWO_PASS_TOLERANCE = 0.10
+
     // H.264 Advanced Video Coding
     private const val MIME_TYPE = "video/avc"
     // H.265 High Efficiency Video Coding
@@ -219,16 +223,43 @@ object Compressor {
         if (configuration.isMinBitrateCheckEnabled && bitrate > 0 && bitrate <= MIN_BITRATE)
             return@withContext Result(index, success = false, failureMessage = INVALID_BITRATE)
 
-        //Handle new bitrate value
-        val newBitrate: Int =
-            if (configuration.videoBitrateInMbps == null) getBitrate(actualBitrate, configuration.quality)
-            else configuration.videoBitrateInMbps!! * 1000000
-
-        //Handle new width and height values
+        //Handle new width and height values. Computed before the bitrate so the
+        //target-size solver can scale its floor to the OUTPUT resolution.
         val resizer = configuration.resizer
         val target = resizer?.resize(width, height) ?: Pair(width, height)
         var newWidth = roundDimension(target.first)
         var newHeight = roundDimension(target.second)
+
+        // Handle new bitrate value. Precedence: an explicit videoBitrateInMbps
+        // wins; else a requested target output size is solved for; else the
+        // quality preset is used.
+        var targetSizeMet = true
+        val newBitrate: Int = when {
+            configuration.videoBitrateInMbps != null ->
+                configuration.videoBitrateInMbps!! * 1000000
+
+            configuration.targetSizeBytes != null -> {
+                val durationSec = duration / 1000000.0
+                // Reserve bits for the (passed-through) audio track and ~3%
+                // container overhead, then solve for the video bitrate.
+                val audioBps =
+                    if (configuration.disableAudio) 0 else findAudioBitrate(extractor)
+                val totalBudgetBits = configuration.targetSizeBytes!! * 8.0
+                val audioBits = audioBps.toDouble() * durationSec
+                val videoBudgetBits = totalBudgetBits * 0.97 - audioBits
+                val solvedBps =
+                    if (durationSec > 0) videoBudgetBits / durationSec else 0.0
+                // Quality floor: keep at least MIN_BITRATE but never exceed the
+                // source (a sub-floor source can't be compressed further). A
+                // target below this lands at the floor and reports
+                // targetSizeMet = false.
+                val floor = minOf(MIN_BITRATE, actualBitrate).toDouble()
+                targetSizeMet = solvedBps >= floor
+                solvedBps.coerceIn(floor, actualBitrate.toDouble()).toInt()
+            }
+
+            else -> getBitrate(actualBitrate, configuration.quality)
+        }
 
         //Handle rotation values and swapping height and width if needed
         rotation = when (rotation) {
@@ -252,19 +283,90 @@ object Compressor {
             else
                 MIME_TYPE
 
-        return@withContext start(
-            index,
-            newWidth,
-            newHeight,
-            destination,
-            newBitrate,
-            configuration.disableAudio,
-            extractor,
-            listener,
-            duration,
-            rotation,
-            outputMime
+        // Phase 8c: re-encode the audio to AAC up front when a bitrate is
+        // requested, capturing the encoder's output format + buffered samples so
+        // the muxer track is described correctly. Null keeps the cheap
+        // passthrough copy.
+        val audioTranscode: AudioTranscodeResult? =
+            if (!configuration.disableAudio && configuration.audioBitrate != null)
+                transcodeAudioToBuffer(context, srcUri, file, configuration.audioBitrate!!)
+            else null
+
+        // Phase 8d: two-pass. Enabled only when requested AND a target size was
+        // set AND it is reachable (a floor-bound pass 1 can't be improved by a
+        // lower bitrate). Pass 1 encodes at the solved bitrate; if it overshoots,
+        // pass 2 re-encodes at a corrected (lower) bitrate. Capped at two passes.
+        // Each pass's progress runs 0..99 (see start()); the terminal 100 is
+        // emitted once, after this function returns.
+        val twoPassEnabled =
+            configuration.twoPass && configuration.targetSizeBytes != null && targetSizeMet
+        val targetBytes = configuration.targetSizeBytes ?: 0L
+        val floor = minOf(MIN_BITRATE, actualBitrate).toDouble()
+
+        var passesUsed = 1
+        // Pass 1 reuses the extractor set up above; start() releases it.
+        var result = start(
+            index, newWidth, newHeight, destination, newBitrate,
+            configuration.disableAudio, extractor, listener, duration, rotation,
+            outputMime, targetSizeMet, configuration.videoFps, audioTranscode,
         )
+
+        if (twoPassEnabled && result.success && isRunning &&
+            result.size > targetBytes * (1.0 + TWO_PASS_TOLERANCE)
+        ) {
+            val adjusted = (newBitrate.toDouble() * targetBytes / result.size)
+                .coerceIn(floor, actualBitrate.toDouble()).toInt()
+            // Skip pass 2 when it can't lower the bitrate (already at the floor).
+            if (adjusted < newBitrate) {
+                // Pass 2 writes to a temp; the valid pass-1 output is kept until
+                // pass 2 succeeds, then atomically replaced. A fresh extractor is
+                // required — start() drains and releases the one it is given.
+                val tempDest = "$destination.p2.mp4"
+                val pass2Extractor = MediaExtractor()
+                var pass2Fis: FileInputStream? = null
+                try {
+                    try {
+                        pass2Fis = FileInputStream(file)
+                        pass2Extractor.setDataSource(pass2Fis.fd)
+                    } catch (e: Exception) {
+                        printException(e)
+                        try { pass2Fis?.close() } catch (ignored: Exception) {}
+                        pass2Fis = null
+                        pass2Extractor.setDataSource(context, srcUri, null)
+                    }
+                    val pass2 = start(
+                        index, newWidth, newHeight, tempDest, adjusted,
+                        configuration.disableAudio, pass2Extractor, listener,
+                        duration, rotation, outputMime, targetSizeMet,
+                        configuration.videoFps, audioTranscode,
+                    )
+                    passesUsed = 2
+                    if (pass2.success) {
+                        try {
+                            File(destination).delete()
+                            File(tempDest).renameTo(File(destination))
+                        } catch (e: Exception) { printException(e) }
+                        result = pass2.copy(
+                            path = destination,
+                            size = File(destination).length(),
+                        )
+                    } else if (pass2.cancelled) {
+                        // Cancelled mid pass-2 — report the cancellation rather
+                        // than the (now stale) pass-1 success.
+                        try { File(tempDest).delete() } catch (ignored: Exception) {}
+                        result = pass2
+                    } else {
+                        // Pass 2 failed — discard it, keep the valid pass 1.
+                        try { File(tempDest).delete() } catch (ignored: Exception) {}
+                    }
+                } finally {
+                    try { pass2Extractor.release() } catch (ignored: Exception) {}
+                    try { pass2Fis?.close() } catch (ignored: Exception) {}
+                }
+            }
+        }
+
+        return@withContext result.copy(passesUsed = passesUsed)
 
         } finally {
             // Release metadata resources and close the file descriptors that were
@@ -287,7 +389,10 @@ object Compressor {
         compressionProgressListener: CompressionProgressListener,
         duration: Long,
         rotation: Int,
-        outputMime: String
+        outputMime: String,
+        targetSizeMet: Boolean,
+        videoFps: Int?,
+        audioTranscode: AudioTranscodeResult?,
     ): Result {
 
         if (newWidth != 0 && newHeight != 0) {
@@ -336,6 +441,18 @@ object Compressor {
                 extractor.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
                 val inputFormat = extractor.getTrackFormat(videoIndex)
 
+                // Frame-rate downsampling (8b): drop frames toward videoFps, but
+                // only when it is below the source rate (never duplicate frames).
+                // frameIntervalUs == 0 disables dropping; nextEmitUs tracks the
+                // timestamp of the next frame to keep.
+                val sourceFps =
+                    if (inputFormat.containsKey(MediaFormat.KEY_FRAME_RATE))
+                        inputFormat.getInteger(MediaFormat.KEY_FRAME_RATE) else 0
+                val frameIntervalUs =
+                    if (videoFps != null && videoFps > 0 && (sourceFps <= 0 || videoFps < sourceFps))
+                        1_000_000L / videoFps else 0L
+                var nextEmitUs = 0L
+
                 // Audio is copied through untouched. Resolve it up front because
                 // every track must be added to MediaMuxer before start().
                 val audioExtractorIndex = findTrack(extractor, isVideo = false)
@@ -353,6 +470,10 @@ object Compressor {
                     outputFormat,
                     newBitrate,
                 )
+                // When downsampling, report the reduced rate on the output format.
+                if (frameIntervalUs > 0L && videoFps != null) {
+                    outputFormat.setInteger(MediaFormat.KEY_FRAME_RATE, videoFps)
+                }
 
                 var decoder: MediaCodec? = null
                 var encoder: MediaCodec? = null
@@ -468,9 +589,14 @@ object Compressor {
                                     if (!muxerStarted) {
                                         videoTrackIndex =
                                             mediaMuxer.addTrack(encoder.outputFormat)
-                                        if (audioFormat != null) {
+                                        // Re-encoded audio (8c) supplies its own
+                                        // output format; otherwise use the source
+                                        // format for the passthrough copy.
+                                        val audioMuxFormat =
+                                            audioTranscode?.format ?: audioFormat
+                                        if (audioMuxFormat != null) {
                                             audioMuxerTrackIndex =
-                                                mediaMuxer.addTrack(audioFormat)
+                                                mediaMuxer.addTrack(audioMuxFormat)
                                         }
                                         mediaMuxer.start()
                                         muxerStarted = true
@@ -520,7 +646,16 @@ object Compressor {
 
                                 decoderStatus < 0 -> throw RuntimeException("unexpected result from decoder.dequeueOutputBuffer: $decoderStatus")
                                 else -> {
-                                    val doRender = bufferInfo.size != 0
+                                    // Frame-rate downsampling (8b): keep this frame
+                                    // only once its timestamp reaches the next emit
+                                    // point; otherwise drop it (decode without
+                                    // rendering, so it never reaches the encoder).
+                                    val keep = frameIntervalUs <= 0L ||
+                                        bufferInfo.presentationTimeUs >= nextEmitUs
+                                    val doRender = bufferInfo.size != 0 && keep
+                                    if (doRender && frameIntervalUs > 0L) {
+                                        nextEmitUs += frameIntervalUs
+                                    }
 
                                     decoder.releaseOutputBuffer(decoderStatus, doRender)
                                     if (doRender) {
@@ -578,14 +713,24 @@ object Compressor {
                     try { outputSurface?.release() } catch (ignored: Exception) {}
                 }
 
-                if (muxerStarted && audioFormat != null && audioMuxerTrackIndex >= 0) {
-                    copyAudioSamples(
-                        mediaMuxer,
-                        audioMuxerTrackIndex,
-                        audioExtractorIndex,
-                        extractor,
-                        bufferInfo,
-                    )
+                if (muxerStarted && audioMuxerTrackIndex >= 0) {
+                    if (audioTranscode != null) {
+                        // Phase 8c: write the pre-encoded AAC samples.
+                        writeBufferedAudio(
+                            mediaMuxer,
+                            audioMuxerTrackIndex,
+                            audioTranscode.samples,
+                            bufferInfo,
+                        )
+                    } else if (audioFormat != null) {
+                        copyAudioSamples(
+                            mediaMuxer,
+                            audioMuxerTrackIndex,
+                            audioExtractorIndex,
+                            extractor,
+                            bufferInfo,
+                        )
+                    }
                 }
 
                 extractor.release()
@@ -627,7 +772,8 @@ object Compressor {
                 size = cacheFile.length(),
                 path = cacheFile.path,
                 duration = reportedDurationUs.toDouble() / 1000000.0,
-                videoFormat = if (outputMime == HEVC_MIME) "h265" else "h264"
+                videoFormat = if (outputMime == HEVC_MIME) "h265" else "h264",
+                targetSizeMet = targetSizeMet,
             )
         }
 
@@ -636,6 +782,205 @@ object Compressor {
             success = false,
             failureMessage = "Something went wrong, please try again"
         )
+    }
+
+    /** One re-encoded AAC access unit, buffered until the muxer is started. */
+    private class EncodedAudioSample(
+        val data: ByteArray,
+        val presentationTimeUs: Long,
+        val flags: Int,
+    )
+
+    /** The captured AAC output format plus all re-encoded samples (Phase 8c). */
+    private class AudioTranscodeResult(
+        val format: MediaFormat,
+        val samples: List<EncodedAudioSample>,
+    )
+
+    /**
+     * Phase 8c: decodes the source audio to PCM and re-encodes it to AAC at
+     * [targetBitrate], keeping the source sample rate (no resampler). Buffers the
+     * encoded samples and captures the encoder's real output format so the caller
+     * can add a correctly-described muxer track before MediaMuxer.start(). Uses
+     * its own MediaExtractor so it does not disturb the video extractor. Returns
+     * null when there is no audio track or transcoding fails (the caller then
+     * falls back to the verbatim passthrough copy).
+     *
+     * The encoded audio is held in memory; this is fine for typical clips but a
+     * very long source means proportionally more memory (see roadmap Phase 11).
+     */
+    private fun transcodeAudioToBuffer(
+        context: Context,
+        srcUri: Uri,
+        file: File,
+        targetBitrate: Int,
+    ): AudioTranscodeResult? {
+        val extractor = MediaExtractor()
+        var fis: FileInputStream? = null
+        var decoder: MediaCodec? = null
+        var encoder: MediaCodec? = null
+        try {
+            try {
+                fis = FileInputStream(file)
+                extractor.setDataSource(fis.fd)
+            } catch (e: Exception) {
+                try { fis?.close() } catch (ignored: Exception) {}
+                fis = null
+                extractor.setDataSource(context, srcUri, null)
+            }
+
+            val audioIndex = findTrack(extractor, isVideo = false)
+            if (audioIndex < 0) return null
+            extractor.selectTrack(audioIndex)
+            val inputFormat = extractor.getTrackFormat(audioIndex)
+            val mime = inputFormat.getString(MediaFormat.KEY_MIME) ?: return null
+            val sampleRate =
+                if (inputFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE))
+                    inputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) else 44100
+            val channelCount =
+                if (inputFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT))
+                    inputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 2
+
+            decoder = MediaCodec.createDecoderByType(mime)
+            decoder.configure(inputFormat, null, null, 0)
+            decoder.start()
+
+            val outFormat = MediaFormat.createAudioFormat(
+                MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channelCount,
+            )
+            outFormat.setInteger(
+                MediaFormat.KEY_AAC_PROFILE,
+                MediaCodecInfo.CodecProfileLevel.AACObjectLC,
+            )
+            outFormat.setInteger(MediaFormat.KEY_BIT_RATE, targetBitrate)
+            outFormat.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 64 * 1024)
+            encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+            encoder.configure(outFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            encoder.start()
+
+            val samples = ArrayList<EncodedAudioSample>()
+            var encoderFormat: MediaFormat? = null
+            val info = MediaCodec.BufferInfo()
+            val timeoutUs = 10000L
+
+            var extractorDone = false
+            var decoderDone = false
+            var encoderDone = false
+
+            // A decoded PCM buffer is held here until the encoder can accept it,
+            // so we never dequeue a decoder buffer we cannot immediately feed.
+            var pendingIndex = -1
+            var pendingOffset = 0
+            var pendingSize = 0
+            var pendingPts = 0L
+            var pendingEos = false
+
+            while (!encoderDone) {
+                // 1) Feed the extractor into the decoder.
+                if (!extractorDone) {
+                    val inIndex = decoder.dequeueInputBuffer(timeoutUs)
+                    if (inIndex >= 0) {
+                        val buf = decoder.getInputBuffer(inIndex)!!
+                        val size = extractor.readSampleData(buf, 0)
+                        if (size < 0) {
+                            decoder.queueInputBuffer(
+                                inIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM,
+                            )
+                            extractorDone = true
+                        } else {
+                            decoder.queueInputBuffer(inIndex, 0, size, extractor.sampleTime, 0)
+                            extractor.advance()
+                        }
+                    }
+                }
+
+                // 2) Pull a decoded PCM buffer (only when not already holding one).
+                if (!decoderDone && pendingIndex < 0) {
+                    val outIndex = decoder.dequeueOutputBuffer(info, timeoutUs)
+                    if (outIndex >= 0) {
+                        pendingIndex = outIndex
+                        pendingOffset = info.offset
+                        pendingSize = info.size
+                        pendingPts = info.presentationTimeUs
+                        pendingEos = (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+                    }
+                }
+
+                // 3) Feed the held PCM into the encoder once it has an input slot.
+                if (pendingIndex >= 0) {
+                    val encIn = encoder.dequeueInputBuffer(timeoutUs)
+                    if (encIn >= 0) {
+                        val encBuf = encoder.getInputBuffer(encIn)!!
+                        encBuf.clear()
+                        if (pendingSize > 0) {
+                            val pcm = decoder.getOutputBuffer(pendingIndex)!!
+                            pcm.position(pendingOffset)
+                            pcm.limit(pendingOffset + pendingSize)
+                            encBuf.put(pcm)
+                        }
+                        encoder.queueInputBuffer(
+                            encIn, 0, pendingSize, pendingPts,
+                            if (pendingEos) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0,
+                        )
+                        decoder.releaseOutputBuffer(pendingIndex, false)
+                        if (pendingEos) decoderDone = true
+                        pendingIndex = -1
+                    }
+                }
+
+                // 4) Drain the encoder, buffering samples + capturing the format.
+                val encOut = encoder.dequeueOutputBuffer(info, timeoutUs)
+                if (encOut == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    encoderFormat = encoder.outputFormat
+                } else if (encOut >= 0) {
+                    val isConfig = (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0
+                    if (info.size > 0 && !isConfig) {
+                        val out = encoder.getOutputBuffer(encOut)!!
+                        out.position(info.offset)
+                        out.limit(info.offset + info.size)
+                        val data = ByteArray(info.size)
+                        out.get(data)
+                        samples.add(
+                            EncodedAudioSample(data, info.presentationTimeUs, info.flags),
+                        )
+                    }
+                    encoder.releaseOutputBuffer(encOut, false)
+                    if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                        encoderDone = true
+                    }
+                }
+            }
+
+            return encoderFormat?.let { AudioTranscodeResult(it, samples) }
+        } catch (e: Exception) {
+            printException(e)
+            return null
+        } finally {
+            try { decoder?.stop() } catch (ignored: Exception) {}
+            try { decoder?.release() } catch (ignored: Exception) {}
+            try { encoder?.stop() } catch (ignored: Exception) {}
+            try { encoder?.release() } catch (ignored: Exception) {}
+            try { extractor.release() } catch (ignored: Exception) {}
+            try { fis?.close() } catch (ignored: Exception) {}
+        }
+    }
+
+    /** Writes the [samples] re-encoded by [transcodeAudioToBuffer] into the
+     *  already-added muxer audio [trackIndex]. */
+    private fun writeBufferedAudio(
+        mediaMuxer: MediaMuxer,
+        trackIndex: Int,
+        samples: List<EncodedAudioSample>,
+        bufferInfo: MediaCodec.BufferInfo,
+    ) {
+        for (sample in samples) {
+            val buffer = ByteBuffer.wrap(sample.data)
+            bufferInfo.offset = 0
+            bufferInfo.size = sample.data.size
+            bufferInfo.presentationTimeUs = sample.presentationTimeUs
+            bufferInfo.flags = sample.flags
+            mediaMuxer.writeSampleData(trackIndex, buffer, bufferInfo)
+        }
     }
 
     /**
@@ -702,6 +1047,22 @@ object Compressor {
      * quality-based fraction in [CompressorUtils.getBitrate] yields a reasonable
      * output instead of the absurdly small result MIN_BITRATE would produce.
      */
+    /**
+     * Source audio-track bitrate (bps) for the target-size solver's audio
+     * reserve, or a 128 kbps AAC fallback when the track does not report one.
+     */
+    private fun findAudioBitrate(extractor: MediaExtractor): Int {
+        val audioIndex = findTrack(extractor, isVideo = false)
+        if (audioIndex >= 0) {
+            val format = extractor.getTrackFormat(audioIndex)
+            if (format.containsKey(MediaFormat.KEY_BIT_RATE)) {
+                val br = format.getInteger(MediaFormat.KEY_BIT_RATE)
+                if (br > 0) return br
+            }
+        }
+        return 128_000
+    }
+
     private fun estimateBitrateFromResolution(width: Double, height: Double): Int {
         val pixels = width * height
         return when {

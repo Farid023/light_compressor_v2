@@ -19,6 +19,23 @@ data class Configuration(
     val resizer: VideoResizer? = VideoResizer.auto,
     var videoNames: List<String>,
     var videoFormat: VideoFormat = VideoFormat.H264,
+    // Target output size in bytes (Phase 8a). When set, the compressor solves
+    // for the video bitrate that lands the output at/under it. Appended last so
+    // the deprecated positional secondary constructors below stay valid.
+    var targetSizeBytes: Long? = null,
+    // Target output frame rate (Phase 8b). Downsample-only; null leaves the
+    // source rate unchanged.
+    var videoFps: Int? = null,
+    // AAC audio re-encode controls (Phase 8c). When [audioBitrate] is set the
+    // audio is re-encoded at that bitrate. NOTE: Android re-encodes at the
+    // SOURCE sample rate (no resampler), so [audioSampleRate] is carried for API
+    // parity but not applied here; it is honored on Apple.
+    var audioBitrate: Int? = null,
+    var audioSampleRate: Int? = null,
+    // Two-pass encoding (Phase 8d). When true AND [targetSizeBytes] is set, the
+    // compressor re-encodes once more at a corrected bitrate if the first pass
+    // overshot the target. Ignored without a target.
+    var twoPass: Boolean = false,
 ) {
     @Deprecated("Use VideoResizer to override the output video dimensions.", ReplaceWith("Configuration(quality, isMinBitrateCheckEnabled, videoBitrateInMbps, disableAudio, resizer = if (keepOriginalResolution) null else VideoResizer.auto, videoNames)"))
     constructor(

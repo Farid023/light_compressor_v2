@@ -1,5 +1,39 @@
 # Changelog
 
+# 1.6.0
+
+### New
+
+- **Target output size** — pass `targetSizeMb` to `compressVideo` (on `Video`) or
+  to `compressVideos` to compress toward a maximum file size in megabytes. The
+  compressor solves for the video bitrate that lands the output at or below the
+  target (reserving room for audio + ~3% container overhead), clamped to a 2 Mbps
+  quality floor and never above the source bitrate. Mutually exclusive with
+  `videoBitrateInMbps`. The new **`OnSuccess.targetSizeMet`** reports whether the
+  target was achievable — `false` when the floor forced a larger output.
+  Single-pass and approximate (typically within ~10–15%).
+- **Two-pass encoding** — pass `twoPass: true` (on `Video` / `compressVideos`,
+  alongside `targetSizeMb`) to land closer to the target size: the compressor
+  encodes once, and only if the output overshot the target does it re-encode a
+  second time at a corrected (lower) bitrate. An undershoot is kept as-is, so it
+  re-encodes only when needed (roughly doubling the time on overshooting clips).
+  The new **`OnSuccess.passesUsed`** reports how many passes ran (1 or 2). Ignored
+  without a `targetSizeMb`.
+- **Frame-rate control** — pass `videoFps` (on `Video` / `compressVideos`) to
+  downsample the output frame rate (e.g. 30 → 24). Downsample-only: a value at or
+  above the source rate leaves it unchanged (frames are never duplicated).
+- **Audio re-encoding** — pass an **`AudioConfig(bitrate:, sampleRate:)`** as
+  `audio:` to re-encode the audio track as AAC with a custom bitrate (and, on
+  Apple, sample rate). Omitting it copies the source audio through untouched.
+  - **Platform note:** `audioSampleRate` is applied on iOS/macOS; **Android
+    re-encodes at the source sample rate** (no resampler), so only `bitrate`
+    takes effect there.
+- Example app gains "max output size (MB)", a "Two-pass (precise size)" toggle,
+  "output FPS" and "audio bitrate (kbps)" fields in the single-video flow.
+
+All additions are additive and fully backward compatible — existing APIs are
+unchanged.
+
 # 1.5.0
 
 ### New

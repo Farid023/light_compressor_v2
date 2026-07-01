@@ -35,13 +35,28 @@ class _SingleCompressViewState extends State<SingleCompressView>
   OnSuccess? _result;
   String? _error;
   bool _runInBackground = false;
+  bool _twoPass = false;
   VideoFormat _videoFormat = VideoFormat.h264;
+  final TextEditingController _targetSizeController = TextEditingController();
+  final TextEditingController _fpsController = TextEditingController();
+  final TextEditingController _audioKbpsController = TextEditingController();
+
+  @override
+  void dispose() {
+    _targetSizeController.dispose();
+    _fpsController.dispose();
+    _audioKbpsController.dispose();
+    super.dispose();
+  }
 
   Future<void> _pickVideo() async {
     final result = await FilePicker.platform.pickFiles(type: FileType.video);
     final path = result?.files.first.path;
     if (path == null) return;
 
+    _targetSizeController.clear();
+    _fpsController.clear();
+    _audioKbpsController.clear();
     setState(() {
       _stage = _Stage.ready;
       _sourcePath = path;
@@ -117,16 +132,31 @@ class _SingleCompressViewState extends State<SingleCompressView>
     });
 
     final videoName = 'LC-${DateTime.now().millisecondsSinceEpoch}.mp4';
+    final parsedTarget = int.tryParse(_targetSizeController.text.trim());
+    final targetSizeMb =
+        (parsedTarget != null && parsedTarget > 0) ? parsedTarget : null;
+    final parsedFps = int.tryParse(_fpsController.text.trim());
+    final videoFps = (parsedFps != null && parsedFps > 0) ? parsedFps : null;
+    final parsedAudioKbps = int.tryParse(_audioKbpsController.text.trim());
+    final audio = (parsedAudioKbps != null && parsedAudioKbps > 0)
+        ? AudioConfig(bitrate: parsedAudioKbps * 1000)
+        : null;
     try {
       final result = await widget.compressor.compressVideo(
         path: path,
         videoQuality: VideoQuality.medium,
         isMinBitrateCheckEnabled: false,
-        video: Video(videoName: videoName),
+        video: Video(
+          videoName: videoName,
+          targetSizeMb: targetSizeMb,
+          videoFps: videoFps,
+          twoPass: _twoPass,
+        ),
         android: AndroidConfig(isSharedStorage: true, saveAt: SaveAt.Movies),
         ios: IOSConfig(saveInGallery: false),
         videoFormat: _videoFormat,
         background: _runInBackground ? const BackgroundConfig() : null,
+        audio: audio,
       );
       if (!mounted) return;
       setState(() {
@@ -195,6 +225,60 @@ class _SingleCompressViewState extends State<SingleCompressView>
                     () => _videoFormat =
                         value ? VideoFormat.h265 : VideoFormat.h264,
                   ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: TextField(
+            controller: _targetSizeController,
+            enabled: _stage != _Stage.compressing,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Max output size (MB) — optional',
+              helperText:
+                  'Compress to about this size; blank uses medium quality',
+              isDense: true,
+            ),
+          ),
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Two-pass (precise size)'),
+          subtitle: const Text(
+            'Re-encode once more if the first pass overshoots the max size '
+            '(needs a max size; about doubles the time)',
+          ),
+          value: _twoPass,
+          onChanged: _stage == _Stage.compressing
+              ? null
+              : (value) => setState(() => _twoPass = value),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: TextField(
+            controller: _fpsController,
+            enabled: _stage != _Stage.compressing,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Output FPS — optional',
+              helperText:
+                  'Downsample to about this rate; blank keeps the source',
+              isDense: true,
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: TextField(
+            controller: _audioKbpsController,
+            enabled: _stage != _Stage.compressing,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Audio bitrate (kbps) — optional',
+              helperText:
+                  'Re-encode AAC at this bitrate; blank copies the source',
+              isDense: true,
+            ),
+          ),
         ),
         if (_info != null || _thumbnailPath != null) ...[
           const SizedBox(height: 16),
@@ -419,6 +503,19 @@ class _ResultCard extends StatelessWidget {
               Text(
                 'Duration: ${formatDuration(Duration(milliseconds: (result.duration * 1000).round()))}',
               ),
+              if (result.passesUsed > 1)
+                Text('Encoded in ${result.passesUsed} passes'),
+              if (!result.targetSizeMet)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Target size could not be met — used the resolution floor.',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.orange.shade800,
+                    ),
+                  ),
+                ),
               const SizedBox(height: 12),
               OutlinedButton.icon(
                 onPressed: () => Navigator.of(context).push(

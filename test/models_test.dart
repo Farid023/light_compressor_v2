@@ -55,6 +55,52 @@ void main() {
       expect(video.videoHeight, 720);
       expect(video.videoWidth, 1280);
     });
+
+    test('targetSizeMb defaults to null and can be set', () {
+      expect(Video(videoName: 'test.mp4').targetSizeMb, isNull);
+      expect(Video(videoName: 'test.mp4', targetSizeMb: 10).targetSizeMb, 10);
+    });
+
+    test(
+      'asserts targetSizeMb and videoBitrateInMbps are mutually exclusive',
+      () {
+        expect(
+          () => Video(
+            videoName: 't.mp4',
+            targetSizeMb: 10,
+            videoBitrateInMbps: 5,
+          ),
+          throwsA(isA<AssertionError>()),
+        );
+      },
+    );
+
+    test('asserts targetSizeMb is positive', () {
+      expect(
+        () => Video(videoName: 't.mp4', targetSizeMb: 0),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('videoFps defaults to null and can be set', () {
+      expect(Video(videoName: 'test.mp4').videoFps, isNull);
+      expect(Video(videoName: 'test.mp4', videoFps: 24).videoFps, 24);
+    });
+
+    test('asserts videoFps is positive', () {
+      expect(
+        () => Video(videoName: 't.mp4', videoFps: 0),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('twoPass defaults to false and can be set', () {
+      expect(Video(videoName: 'test.mp4').twoPass, isFalse);
+      expect(
+        Video(videoName: 'test.mp4', targetSizeMb: 10, twoPass: true).twoPass,
+        isTrue,
+      );
+    });
   });
 
   group('CompressionResult', () {
@@ -85,6 +131,48 @@ void main() {
         usedFormat: VideoFormat.h265,
       );
       expect(result.usedFormat, VideoFormat.h265);
+    });
+
+    test('OnSuccess targetSizeMet defaults to true and can be set false', () {
+      const met = OnSuccess(
+        destinationPath: '/path/to/video.mp4',
+        originalSize: 1000,
+        compressedSize: 500,
+        duration: 10.0,
+        ratio: 50.0,
+      );
+      expect(met.targetSizeMet, true);
+
+      const unmet = OnSuccess(
+        destinationPath: '/path/to/video.mp4',
+        originalSize: 1000,
+        compressedSize: 500,
+        duration: 10.0,
+        ratio: 50.0,
+        targetSizeMet: false,
+      );
+      expect(unmet.targetSizeMet, false);
+    });
+
+    test('OnSuccess passesUsed defaults to 1 and can be set', () {
+      const single = OnSuccess(
+        destinationPath: '/path/to/video.mp4',
+        originalSize: 1000,
+        compressedSize: 500,
+        duration: 10.0,
+        ratio: 50.0,
+      );
+      expect(single.passesUsed, 1);
+
+      const two = OnSuccess(
+        destinationPath: '/path/to/video.mp4',
+        originalSize: 1000,
+        compressedSize: 500,
+        duration: 10.0,
+        ratio: 50.0,
+        passesUsed: 2,
+      );
+      expect(two.passesUsed, 2);
     });
 
     test('OnFailure contains message', () {
@@ -259,6 +347,25 @@ void main() {
       const r = ThumbnailRequest(positionInMs: 2000, quality: 90);
       expect(r.positionInMs, 2000);
       expect(r.quality, 90);
+    });
+  });
+
+  group('AudioConfig', () {
+    test('defaults to null fields', () {
+      const a = AudioConfig();
+      expect(a.bitrate, isNull);
+      expect(a.sampleRate, isNull);
+    });
+
+    test('stores values', () {
+      const a = AudioConfig(bitrate: 128000, sampleRate: 44100);
+      expect(a.bitrate, 128000);
+      expect(a.sampleRate, 44100);
+    });
+
+    test('asserts positive bitrate and sampleRate', () {
+      expect(() => AudioConfig(bitrate: 0), throwsA(isA<AssertionError>()));
+      expect(() => AudioConfig(sampleRate: 0), throwsA(isA<AssertionError>()));
     });
   });
 }

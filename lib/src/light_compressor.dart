@@ -109,6 +109,9 @@ class LightCompressor {
   ///   app is backgrounded or the screen is off. Behaviour and guarantees vary
   ///   per platform; see [BackgroundConfig]. Defaults to `null` (the OS may
   ///   pause/terminate the compression once the app leaves the foreground).
+  /// * [audio] — When provided, re-encodes the audio track as AAC with the
+  ///   given bitrate/sample-rate; see [AudioConfig]. Ignored when [disableAudio]
+  ///   is `true`. Defaults to `null` (the source audio is copied through).
   ///
   /// Returns a [Result] which can be:
   /// * [OnSuccess] containing the output destination file path and statistics.
@@ -130,6 +133,7 @@ class LightCompressor {
     bool isMinBitrateCheckEnabled = true,
     VideoFormat videoFormat = VideoFormat.h264,
     BackgroundConfig? background,
+    AudioConfig? audio,
   }) async {
     final Map<String, dynamic> response = jsonDecode(
       await _channel
@@ -139,11 +143,18 @@ class LightCompressor {
             'isSharedStorage': android.isSharedStorage,
             'saveAt': android.saveAt.name,
             'disableAudio': disableAudio,
+            'audioBitrate': audio?.bitrate,
+            'audioSampleRate': audio?.sampleRate,
             'keepOriginalResolution': video.keepOriginalResolution,
             'isMinBitrateCheckEnabled': isMinBitrateCheckEnabled,
             'videoBitrateInMbps': video.videoBitrateInMbps,
+            'targetSizeBytes': video.targetSizeMb != null
+                ? video.targetSizeMb! * 1000 * 1000
+                : null,
+            'twoPass': video.twoPass,
             'videoHeight': video.videoHeight,
             'videoWidth': video.videoWidth,
+            'videoFps': video.videoFps,
             'videoName': video.videoName,
             'saveInGallery': ios.saveInGallery,
             'videoFormat': videoFormat.name,
@@ -186,6 +197,8 @@ class LightCompressor {
         duration: duration,
         ratio: ratio,
         usedFormat: _videoFormatFromWire(response['usedFormat'] as String?),
+        targetSizeMet: (response['targetSizeMet'] as bool?) ?? true,
+        passesUsed: (response['passesUsed'] as num?)?.toInt() ?? 1,
       );
     } else if (response['onFailure'] != null) {
       final String failureMessage = response['onFailure'] as String;
@@ -228,6 +241,10 @@ class LightCompressor {
   /// When [background] is provided the whole batch keeps running while the app
   /// is backgrounded or the screen is off; see [BackgroundConfig] for the
   /// per-platform behaviour and caveats.
+  ///
+  /// [twoPass] enables two-pass encoding to land closer to [targetSizeMb] (it is
+  /// ignored without a target). See `Video.twoPass` for the trade-offs; the
+  /// number of passes run per video is reported by `OnSuccess.passesUsed`.
   Future<List<Result>> compressVideos({
     required List<String> paths,
     required List<String> videoNames,
@@ -238,15 +255,28 @@ class LightCompressor {
     int? videoWidth,
     int? videoHeight,
     int? videoBitrateInMbps,
+    int? targetSizeMb,
+    int? videoFps,
+    bool twoPass = false,
     bool disableAudio = false,
     bool isMinBitrateCheckEnabled = true,
     VideoFormat videoFormat = VideoFormat.h264,
     BackgroundConfig? background,
+    AudioConfig? audio,
   }) async {
     assert(
       paths.length == videoNames.length,
       'paths and videoNames must have the same length',
     );
+    assert(
+      targetSizeMb == null || videoBitrateInMbps == null,
+      'targetSizeMb and videoBitrateInMbps are mutually exclusive',
+    );
+    assert(
+      targetSizeMb == null || targetSizeMb > 0,
+      'targetSizeMb must be greater than 0',
+    );
+    assert(videoFps == null || videoFps > 0, 'videoFps must be greater than 0');
     if (paths.isEmpty) {
       return <Result>[];
     }
@@ -263,7 +293,14 @@ class LightCompressor {
           'videoWidth': videoWidth,
           'videoHeight': videoHeight,
           'videoBitrateInMbps': videoBitrateInMbps,
+          'targetSizeBytes': targetSizeMb != null
+              ? targetSizeMb * 1000 * 1000
+              : null,
+          'twoPass': twoPass,
+          'videoFps': videoFps,
           'disableAudio': disableAudio,
+          'audioBitrate': audio?.bitrate,
+          'audioSampleRate': audio?.sampleRate,
           'isMinBitrateCheckEnabled': isMinBitrateCheckEnabled,
           'videoFormat': videoFormat.name,
           'background': background?.toMap(),
@@ -299,6 +336,8 @@ class LightCompressor {
         duration: duration,
         ratio: ratio,
         usedFormat: _videoFormatFromWire(map['usedFormat'] as String?),
+        targetSizeMet: (map['targetSizeMet'] as bool?) ?? true,
+        passesUsed: (map['passesUsed'] as num?)?.toInt() ?? 1,
       );
     } else if (map['onFailure'] != null) {
       return OnFailure(

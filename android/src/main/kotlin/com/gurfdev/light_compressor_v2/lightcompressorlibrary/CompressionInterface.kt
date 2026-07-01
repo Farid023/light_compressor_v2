@@ -31,7 +31,7 @@ interface CompressionListener {
     fun onStart(index: Int)
 
     @MainThread
-    fun onSuccess(index: Int, size: Long, path: String?, duration: Double, videoFormat: String)
+    fun onSuccess(index: Int, size: Long, path: String?, duration: Double, videoFormat: String, targetSizeMet: Boolean = true, passesUsed: Int = 1)
 
     @MainThread
     fun onFailure(index: Int, failureMessage: String, errorType: CompressionErrorType = CompressionErrorType.UNKNOWN)

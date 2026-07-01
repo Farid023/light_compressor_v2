@@ -7,8 +7,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `light_compressor_v2` is a **Flutter plugin** that compresses videos — one at a
 time or in batches — using **each platform's native codecs**: Android
 `MediaCodec` / `MediaMuxer`, Apple `AVFoundation`. It also exposes media-info,
-thumbnail extraction, cancellation, progress streams, optional background
-execution, and H.264 / H.265 (HEVC) selection with automatic fallback.
+thumbnail extraction (single + batch), a pre-flight size estimate, cancellation,
+progress streams, optional background execution, H.264 / H.265 (HEVC) selection
+with automatic fallback, and fine output control — target file size, frame-rate
+downsampling, AAC audio re-encode, and optional two-pass encoding.
 
 Published to pub.dev (version in [`pubspec.yaml`](pubspec.yaml)). The
 **consumer-facing** API and every option are documented in [`README.md`](README.md);
@@ -45,7 +47,8 @@ plugin:
 
 - **MethodChannel `light_compressor`** — methods: `startCompression`,
   `startBatchCompression`, `cancelCompression`, `clearCache`, `getMediaInfo`,
-  `getVideoThumbnail`.
+  `getVideoThumbnail`, `getVideoThumbnails`, `getCompressionEstimate`,
+  `isCompressing`.
 - **EventChannel `compression/stream`** — single-video progress: a bare `double`
   `0`–`100`.
 - **EventChannel `compression/batch-stream`** — batch events: maps tagged
@@ -55,7 +58,7 @@ plugin:
 **Result maps** (what the natives send back; parsed by `_resultFromMap` in
 [`lib/src/light_compressor.dart`](lib/src/light_compressor.dart)):
 
-- success → `{ onSuccess: <path>, originalSize, compressedSize, duration, usedFormat: "h264"|"h265", index }`
+- success → `{ onSuccess: <path>, originalSize, compressedSize, duration, usedFormat: "h264"|"h265", targetSizeMet, passesUsed, index }`
 - failure → `{ onFailure: <message>, failureType: "permission"|"unsupported"|"notFound"|"unknown", index }`
 - cancelled → `{ onCancelled: true }`
 
@@ -68,6 +71,10 @@ plugin:
   report errors as a `PlatformException` (`result.error(code, …)`) with codes
   `VIDEO_NOT_FOUND` / `PERMISSION_DENIED` / `UNSUPPORTED_VIDEO` /
   `MEDIA_INFO_FAILED` / `THUMBNAIL_FAILED`.
+- `getVideoThumbnails` returns a **`List` of path strings** (one per requested
+  frame); `getCompressionEstimate` returns a **map** (parsed by
+  `CompressionEstimate.fromMap`); `isCompressing` returns a bare **`bool`**.
+  The introspection methods report errors as a `PlatformException` (same codes).
 
 The `failureType` string values are matched **verbatim** on every side —
 Kotlin `CompressionErrorType.toWireValue()`, Swift `MediaError.type.rawValue`,
@@ -90,6 +97,16 @@ Dart `_failureTypeFromWire` / `_exceptionFor`. **Change one, change all four.**
 - **Native-reported sizes win.** Output may land in scoped/shared storage that
   Dart's `File` cannot stat, so Dart prefers the native `originalSize` /
   `compressedSize` and only falls back to reading the file when they are absent.
+- **Target size is a ceiling with a floor.** `targetSizeMb` makes the natives
+  solve for a bitrate, but never below ~2 Mbps (`MIN_BITRATE`); when that floor
+  forces a larger output, `OnSuccess.targetSizeMet` is `false`. The real size is
+  always in `compressedSize`. Precedence: explicit `videoBitrateInMbps` >
+  `targetSizeMb` > quality preset.
+- **Two-pass never enlarges.** `twoPass` runs a corrective second pass only when
+  pass 1 *overshoots* the target by >10% (and the target was reachable); an
+  undershoot is kept as-is, and a failed/cancelled pass 2 discards its temp and
+  keeps pass 1 — so a two-pass run can never be worse than single-pass.
+  `OnSuccess.passesUsed` (1 or 2) reports what actually happened.
 
 ---
 
@@ -103,24 +120,35 @@ encodes/decodes the channel contract.
   The `LightCompressor` **singleton** (`factory LightCompressor() => _instance`)
   owning the one `MethodChannel` and two `EventChannel`s. Holds: the API methods
   (`compressVideo`, `compressVideos`, `getMediaInfo`, `getVideoThumbnail`,
-  `clearCache`, `cancelCompression`); the lazy broadcast streams
+  `getVideoThumbnails`, `getCompressionEstimate`, `isCompressing`, `clearCache`,
+  `cancelCompression`); the lazy broadcast streams
   `onProgressUpdated` (`Stream<double>`) and `onBatchUpdate` (`Stream<BatchEvent>`);
   `_resultFromMap` (the decoder shared by the batch return value and
   `BatchItemCompleted` events); the wire decoders `_videoFormatFromWire` /
   `_failureTypeFromWire`; the failure→exception mappers `_exceptionFor` (compress)
-  and `_mapPlatformException` (media-info/thumbnail); and the `VideoQuality` enum.
+  and `_mapPlatformException` (the introspection methods); and the `VideoQuality` enum.
 - **[`src/compression_result.dart`](lib/src/compression_result.dart)** — the
-  `Result` type and its `OnSuccess` / `OnFailure` / `OnCancelled` subtypes, plus
+  `Result` type and its `OnSuccess` / `OnFailure` / `OnCancelled` subtypes (the
+  `OnSuccess` carries `usedFormat`, `targetSizeMet`, and `passesUsed`), plus
   the `CompressionFailureType` enum.
 - **[`src/batch_event.dart`](lib/src/batch_event.dart)** — `BatchEvent` with
   `BatchProgress` and `BatchItemCompleted`.
 - **[`src/media_info.dart`](lib/src/media_info.dart)** — `MediaInfo` + `fromMap`;
   exposes encoded `width`/`height` and rotation-aware `displayWidth`/`displayHeight`.
+- **[`src/compression_estimate.dart`](lib/src/compression_estimate.dart)** —
+  `CompressionEstimate` + `fromMap`: the pre-flight prediction returned by
+  `getCompressionEstimate` (`estimatedSizeBytes`, `targetBitrate`, output
+  dimensions, `estimatedRatio`), computed natively from metadata with no transcode.
+- **[`src/thumbnail_request.dart`](lib/src/thumbnail_request.dart)** —
+  `ThumbnailRequest` (`positionInMs`, `quality`) + `toMap()`, the per-frame input
+  to the batch `getVideoThumbnails`.
 - **[`src/exceptions.dart`](lib/src/exceptions.dart)** — `LightCompressorException`
   base + `PermissionDeniedException`, `UnsupportedVideoException`,
   `VideoNotFoundException`, `MediaInfoException`, `ThumbnailException`.
-- **Option models** — [`src/video.dart`](lib/src/video.dart) (output
-  name/size/bitrate), [`src/video_format.dart`](lib/src/video_format.dart)
+- **Option models** — [`src/video.dart`](lib/src/video.dart) (output name +
+  `videoBitrateInMbps` / `targetSizeMb` / `videoFps` / `twoPass`),
+  [`src/audio_config.dart`](lib/src/audio_config.dart) (`AudioConfig` —
+  `bitrate` / `sampleRate`), [`src/video_format.dart`](lib/src/video_format.dart)
   (`VideoFormat { h264, h265 }`),
   [`src/android_config.dart`](lib/src/android_config.dart) (`AndroidConfig` +
   `SaveAt`), [`src/ios_config.dart`](lib/src/ios_config.dart) (`IOSConfig`),
@@ -130,14 +158,17 @@ encodes/decodes the channel contract.
 **Behaviour to preserve:**
 
 - **Argument-map keys are the contract.** The keys passed to `invokeMethod`
-  (`videoName`, `isMinBitrateCheckEnabled`, `saveAt`, `videoFormat`,
-  `background`, …) must match the keys the natives read via `call.argument(...)` /
-  `args[...]`. Renaming a key here means renaming it in all three natives.
+  (`videoName`, `isMinBitrateCheckEnabled`, `saveAt`, `videoFormat`, `background`,
+  and the Phase 8 keys `targetSizeBytes` / `videoFps` / `audioBitrate` /
+  `audioSampleRate` / `twoPass`, …) must match the keys the natives read via
+  `call.argument(...)` / `args[...]`. Renaming a key here means renaming it in all
+  three natives.
 - **Two failure-delivery modes, kept distinct:** `compressVideo` /
   `compressVideos` *throw* a typed exception only for a **classified** failure
   (via `_exceptionFor`) and otherwise *return* `OnFailure` (batch slots never
-  throw); `getMediaInfo` / `getVideoThumbnail` *always throw* on error (mapping a
-  native `PlatformException` code).
+  throw); the introspection methods (`getMediaInfo`, `getVideoThumbnail`,
+  `getVideoThumbnails`, `getCompressionEstimate`) *always throw* on error
+  (mapping a native `PlatformException` code).
 - **Defensive numeric parsing** — channel numbers arrive as `int` or `double`
   unpredictably; always coerce with `(x as num?)?.toDouble()` / `.toInt()`.
 - `compressVideos` short-circuits an empty `paths` list to `[]` and asserts
@@ -155,8 +186,11 @@ It parses the argument map, requests storage permission in an API-level-aware wa
 (`READ_MEDIA_VIDEO` on API 33+, `READ/WRITE_EXTERNAL_STORAGE` on legacy), drives
 `VideoCompressor.start`, and marshals the `CompressionListener` callbacks into
 result maps (via `replyOnce` for single / per-index `record` for batch). It also
-implements `getMediaInfo` / `getVideoThumbnail` with `MediaMetadataRetriever` on a
-worker thread, and `clearCache` (deletes `.mp4`/`.jpg` from the app cache dir).
+implements `getMediaInfo` / `getVideoThumbnail` / `getVideoThumbnails` with
+`MediaMetadataRetriever` on a worker thread, `getCompressionEstimate` (the
+size/bitrate prediction, computed here from metadata), `isCompressing`
+(delegating to `VideoCompressor.isCompressing()`), and `clearCache` (deletes
+`.mp4`/`.jpg` from the app cache dir).
 
 **Engine** — [`lightcompressorlibrary/`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/),
 a vendored fork of the LightCompressor library:
@@ -172,7 +206,10 @@ a vendored fork of the LightCompressor library:
   `VideoQuality` and `VideoFormat` enums.
 - [`compressor/Compressor.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/compressor/Compressor.kt)
   — the actual decode→GL→encode→`MediaMuxer` pipeline; the `@Volatile isRunning`
-  flag lives here.
+  flag lives here. Also home to the Phase 8 logic: the target-size bitrate solver
+  (`MIN_BITRATE` floor), frame-dropping for `videoFps`, the AAC audio re-encode
+  (`transcodeAudioToBuffer` + muxer track ordering), and the two-pass corrective
+  loop (`TWO_PASS_TOLERANCE`, a fresh `MediaExtractor` per pass, temp-file replace).
 - [`config/Configuration.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/config/Configuration.kt)
   — the `Configuration` settings data class **and** the `StorageConfiguration`
   strategies that decide where output lands: `SharedStorageConfiguration`
@@ -221,14 +258,20 @@ to CocoaPods. Sources sit under `…/Sources/light_compressor_v2/`:
   [`LightCompressorPlugin.swift`](macos/light_compressor_v2/Sources/light_compressor_v2/LightCompressorPlugin.swift)
   — registers the three channels, dispatches the methods, applies `replyOnce` /
   per-index `record`, saves to the Photos library when `saveInGallery`, and
-  implements `getMediaInfo` / `getVideoThumbnail` / `clearCache`. A nested
+  implements `getMediaInfo` / `getVideoThumbnail` / `getVideoThumbnails` /
+  `getCompressionEstimate` / `isCompressing` / `clearCache`. A nested
   `BatchStreamHandler` backs the batch EventChannel.
 - **Engine** — `LightCompressor.swift` — the `AVFoundation` transcoder:
   `AVAssetReader` → `AVAssetWriter` (created with `fileType: .mp4` so the
   container matches the `.mp4` name), quality→bitrate math, HEVC selection with
   silent H.264 fallback, progress + completion callbacks, the typed `MediaError`,
-  and the static `mediaInfo` / `thumbnail` / `clearCache` helpers. The `cancel`
-  flag rides on the returned `Compression` handle.
+  the static `mediaInfo` / `thumbnail` / `clearCache` helpers, and the
+  `estimate(...)` behind `getCompressionEstimate`. The `cancel` flag rides on the
+  returned `Compression` handle. Phase 8 adds the target-size solver, frame-dropping
+  for `videoFps`, the AAC audio re-encode, and the two-pass corrective loop — the
+  transcode body is factored into a re-callable `encodePass(...)` (each pass streams
+  0..<100, so the terminal signal is the result, never a mid-stream 100) driven from
+  the pass-1 completion.
 - **`extensions/Encodable.swift`** — the `toJson` used to encode the
   single-compress reply.
 
@@ -267,6 +310,16 @@ The demo app is also the only place the native pipeline runs end-to-end.
     not sink the others; input order preserved).
   - [`integration_test/hevc_compression_test.dart`](example/integration_test/hevc_compression_test.dart)
     — H.264 / H.265 selection and the automatic fallback (`usedFormat`).
+  - [`integration_test/preflight_test.dart`](example/integration_test/preflight_test.dart)
+    — `getCompressionEstimate`, batch `getVideoThumbnails`, and `isCompressing`
+    (Phase 7 introspection).
+  - [`integration_test/target_size_test.dart`](example/integration_test/target_size_test.dart),
+    [`fps_test.dart`](example/integration_test/fps_test.dart),
+    [`audio_test.dart`](example/integration_test/audio_test.dart), and
+    [`two_pass_test.dart`](example/integration_test/two_pass_test.dart) — the
+    Phase 8 options (target size, frame-rate downsample, AAC audio re-encode,
+    two-pass). The corrective second pass only runs when pass 1 overshoots, so a
+    highly compressible clip stays single-pass (`passesUsed == 1`).
   - [`integration_test/support.dart`](example/integration_test/support.dart) —
     shared helpers (e.g. `expectReadableVideo`).
   - `integration_test/assets/sample.mp4` — a short sample clip the tests feed in
