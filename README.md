@@ -2,6 +2,7 @@
 
 [![Pub Version](https://img.shields.io/pub/v/light_compressor_v2.svg)](https://pub.dev/packages/light_compressor_v2)
 [![CI](https://github.com/Farid023/light_compressor_v2/actions/workflows/ci.yml/badge.svg)](https://github.com/Farid023/light_compressor_v2/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/Farid023/light_compressor_v2/graph/badge.svg)](https://codecov.io/gh/Farid023/light_compressor_v2)
 [![Pub Platforms](https://img.shields.io/badge/platform-iOS%20%7C%20Android%20%7C%20macOS-blue)](https://pub.dev/packages/light_compressor_v2)
 [![Pub Likes](https://img.shields.io/pub/likes/light_compressor_v2)](https://pub.dev/packages/light_compressor_v2)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)

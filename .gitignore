@@ -7,6 +7,9 @@ build/
 .flutter-plugins
 .flutter-plugins-dependencies
 
+# Test coverage output
+coverage/
+
 # IDE project files
 *.iml
 

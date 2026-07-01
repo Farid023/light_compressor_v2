@@ -527,4 +527,40 @@ void main() {
       expect(CompressionProgress.fromEvent(null).percent, 0.0);
     });
   });
+
+  group('toString', () {
+    test('models and batch events produce descriptive strings', () {
+      expect(
+        MediaInfo.fromMap(<String, dynamic>{
+          'width': 100,
+          'height': 200,
+        }).toString(),
+        contains('MediaInfo'),
+      );
+      expect(
+        CompressionEstimate.fromMap(<String, dynamic>{}).toString(),
+        contains('CompressionEstimate'),
+      );
+      expect(
+        CompressionProgress.fromEvent(50).toString(),
+        contains('CompressionProgress'),
+      );
+      expect(
+        const MediaInfoException('boom').toString(),
+        contains('MediaInfoException'),
+      );
+      expect(
+        const BatchProgress(
+          index: 0,
+          percent: 10.0,
+          overallPercent: 5.0,
+        ).toString(),
+        contains('BatchProgress'),
+      );
+      expect(
+        const BatchItemCompleted(index: 0, result: OnFailure('x')).toString(),
+        contains('BatchItemCompleted'),
+      );
+    });
+  });
 }
