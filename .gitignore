@@ -24,3 +24,7 @@ coverage/
 
 # Local planning notes
 implementation_plan.md
+
+# Large local benchmark inputs — never commit (push to the device with adb)
+example/integration_test/assets/sample1.mp4
+example/integration_test/assets/sample2.mp4
