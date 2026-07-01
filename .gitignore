@@ -8,6 +8,9 @@ build/
 .flutter-plugins-dependencies
 
 # Test coverage output
+.coverage
+coverage.lcov
+coverage_report
 coverage/
 
 # IDE project files
