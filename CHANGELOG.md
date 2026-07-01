@@ -1,5 +1,11 @@
 # Changelog
 
+# 1.8.1
+
+### Changed
+
+- **Docs:** refreshed the pub.dev package description. No code or API changes.
+
 # 1.8.0
 
 ### New
