@@ -9,8 +9,9 @@ time or in batches — using **each platform's native codecs**: Android
 `MediaCodec` / `MediaMuxer`, Apple `AVFoundation`. It also exposes media-info,
 thumbnail extraction (single + batch), a pre-flight size estimate, cancellation,
 progress streams, optional background execution, H.264 / H.265 (HEVC) selection
-with automatic fallback, and fine output control — target file size, frame-rate
-downsampling, AAC audio re-encode, and optional two-pass encoding.
+with automatic fallback, fine output control — target file size, frame-rate
+downsampling, AAC audio re-encode, optional two-pass encoding — and lightweight
+native editing (trim, quarter-turn rotate, and colour adjust).
 
 Published to pub.dev (version in [`pubspec.yaml`](pubspec.yaml)). The
 **consumer-facing** API and every option are documented in [`README.md`](README.md);
@@ -107,6 +108,19 @@ Dart `_failureTypeFromWire` / `_exceptionFor`. **Change one, change all four.**
   undershoot is kept as-is, and a failed/cancelled pass 2 discards its temp and
   keeps pass 1 — so a two-pass run can never be worse than single-pass.
   `OnSuccess.passesUsed` (1 or 2) reports what actually happened.
+- **Editing is trim + metadata-rotate, never re-render-to-rotate.** `VideoEdit`
+  trims to a time range — the output PTS are **rebased to 0** and the reported
+  `duration` is the trimmed length (the size solver + progress denominator use it
+  too) — and rotates by a composed quarter-turn. Rotation is **container
+  metadata**: Apple composes onto `preferredTransform`; Android applies it as a
+  `setOrientationHint` *after* its source-rotation normalization (a 90/270 turn
+  swaps the *displayed* dims, never the stored ones — folding it into the
+  dim-swap would distort instead of rotate). Colour adjust
+  (`brightness`/`contrast`/`saturation`, CIColorControls semantics) **is** baked
+  into the pixels — Android via the `TextureRenderer` GL shader, Apple via a
+  `CIColorControls` video composition — so cross-platform pixel parity is not
+  guaranteed; the no-colour path stays a cheap no-op (identity uniforms / the
+  plain track output).
 
 ---
 
@@ -148,7 +162,11 @@ encodes/decodes the channel contract.
 - **Option models** — [`src/video.dart`](lib/src/video.dart) (output name +
   `videoBitrateInMbps` / `targetSizeMb` / `videoFps` / `twoPass`),
   [`src/audio_config.dart`](lib/src/audio_config.dart) (`AudioConfig` —
-  `bitrate` / `sampleRate`), [`src/video_format.dart`](lib/src/video_format.dart)
+  `bitrate` / `sampleRate`), [`src/video_edit.dart`](lib/src/video_edit.dart)
+  (`VideoEdit` — `trimStartMs` / `trimEndMs` / `rotationDegrees` +
+  `brightness` / `contrast` / `saturation` (clamped in `toMap()`); the top-level
+  `edit:` param on both entry points),
+  [`src/video_format.dart`](lib/src/video_format.dart)
   (`VideoFormat { h264, h265 }`),
   [`src/android_config.dart`](lib/src/android_config.dart) (`AndroidConfig` +
   `SaveAt`), [`src/ios_config.dart`](lib/src/ios_config.dart) (`IOSConfig`),
@@ -159,8 +177,10 @@ encodes/decodes the channel contract.
 
 - **Argument-map keys are the contract.** The keys passed to `invokeMethod`
   (`videoName`, `isMinBitrateCheckEnabled`, `saveAt`, `videoFormat`, `background`,
-  and the Phase 8 keys `targetSizeBytes` / `videoFps` / `audioBitrate` /
-  `audioSampleRate` / `twoPass`, …) must match the keys the natives read via
+  the Phase 8 keys `targetSizeBytes` / `videoFps` / `audioBitrate` /
+  `audioSampleRate` / `twoPass`, and the Phase 9 nested `edit` map
+  (`trimStartMs` / `trimEndMs` / `rotationDegrees`), …) must match the keys the
+  natives read via
   `call.argument(...)` / `args[...]`. Renaming a key here means renaming it in all
   three natives.
 - **Two failure-delivery modes, kept distinct:** `compressVideo` /
@@ -210,6 +230,11 @@ a vendored fork of the LightCompressor library:
   (`MIN_BITRATE` floor), frame-dropping for `videoFps`, the AAC audio re-encode
   (`transcodeAudioToBuffer` + muxer track ordering), and the two-pass corrective
   loop (`TWO_PASS_TOLERANCE`, a fresh `MediaExtractor` per pass, temp-file replace).
+  Phase 9 adds trim — `seekTo(trimStartUs)`, drop-before / EOS-after the range in
+  the decode loop, PTS rebased to 0 (video + both audio paths) — rotate, as a
+  `setOrientationHint` applied *after* the source-rotation normalization — and
+  colour, baked by the `TextureRenderer` fragment shader (identity uniforms when
+  no colour, so it stays free).
 - [`config/Configuration.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/config/Configuration.kt)
   — the `Configuration` settings data class **and** the `StorageConfiguration`
   strategies that decide where output lands: `SharedStorageConfiguration`
@@ -271,7 +296,12 @@ to CocoaPods. Sources sit under `…/Sources/light_compressor_v2/`:
   for `videoFps`, the AAC audio re-encode, and the two-pass corrective loop — the
   transcode body is factored into a re-callable `encodePass(...)` (each pass streams
   0..<100, so the terminal signal is the result, never a mid-stream 100) driven from
-  the pass-1 completion.
+  the pass-1 completion. Phase 9 adds trim — each reader's `timeRange` + a
+  `startSession(atSourceTime:)` at the range start (output rebased to 0; reported
+  duration = trimmed) — rotate, by composing the quarter-turn onto
+  `videoWriterInput.transform` — and colour, by reading through an
+  `AVAssetReaderVideoCompositionOutput` driven by a `CIColorControls` filter
+  (only when a colour knob is set; otherwise the cheap track output).
 - **`extensions/Encodable.swift`** — the `toJson` used to encode the
   single-compress reply.
 
@@ -320,6 +350,11 @@ The demo app is also the only place the native pipeline runs end-to-end.
     Phase 8 options (target size, frame-rate downsample, AAC audio re-encode,
     two-pass). The corrective second pass only runs when pass 1 overshoots, so a
     highly compressible clip stays single-pass (`passesUsed == 1`).
+  - [`integration_test/edit_test.dart`](example/integration_test/edit_test.dart)
+    — the Phase 9 editing: trim yields an output of ~the requested length (and
+    shorter than the source), a 90° rotate swaps the displayed dims vs an
+    unrotated baseline (source-agnostic), and `saturation: 0` desaturates the
+    output toward grayscale (decoded via `dart:ui`).
   - [`integration_test/support.dart`](example/integration_test/support.dart) —
     shared helpers (e.g. `expectReadableVideo`).
   - `integration_test/assets/sample.mp4` — a short sample clip the tests feed in

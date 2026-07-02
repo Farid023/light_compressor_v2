@@ -28,6 +28,7 @@ Extreme high bitrates are reduced while maintaining good video quality, resultin
 - **Target file size** — compress toward a maximum output size in megabytes via `targetSizeMb`; the compressor solves for the bitrate and reports whether the target was reachable (`OnSuccess.targetSizeMet`). Add `twoPass: true` to re-encode once more when the first pass overshoots, landing closer to the target (`OnSuccess.passesUsed`).
 - **Frame-rate control** — downsample the output frame rate via `videoFps` (downsample-only — never duplicates frames).
 - **Audio re-encoding** — re-encode the audio track as AAC with a custom bitrate (and sample rate on iOS/macOS) via `AudioConfig`.
+- **Lightweight editing** — trim (`trimStartMs` / `trimEndMs`), rotate by a quarter-turn (`rotationDegrees`), and adjust colour (`brightness` / `contrast` / `saturation`) while compressing, via `VideoEdit` — still 100% native (no ffmpeg).
 - **Structured success result** — `OnSuccess` carries `originalSize`, `compressedSize`, `duration`, and `ratio` (percentage reduction).
 - **Media info** — read width, height, duration, bitrate, rotation, frame rate, and MIME type via `getMediaInfo`.
 - **Thumbnail extraction** — grab a JPEG frame at any timecode via `getVideoThumbnail`, or several at once via `getVideoThumbnails`.
@@ -242,6 +243,37 @@ passes ran. `audioSampleRate` is honored on iOS/macOS; **Android re-encodes audi
 at the source sample rate** (no resampler), so only the audio `bitrate` applies
 there.
 
+### Trim, rotate, and adjust colour
+
+Pass an optional `VideoEdit` as `edit:` to trim to a time range, rotate by a
+quarter-turn, and/or adjust colour while compressing (both entry points accept it):
+
+```dart
+final Result result = await compressor.compressVideo(
+  path: sourcePath,
+  videoQuality: VideoQuality.medium,
+  android: AndroidConfig(),
+  ios: IOSConfig(),
+  video: Video(videoName: 'edited.mp4'),
+  edit: const VideoEdit(
+    trimStartMs: 1000,    // keep from 1s…
+    trimEndMs: 5000,      // …to 5s (output duration ≈ 4s, rebased to 0)
+    rotationDegrees: 90,  // quarter-turn on top of the source orientation
+    saturation: 0.0,      // 0..2 (1 = no change); 0 = grayscale
+    brightness: 0.1,      // -1..1 (0 = no change)
+  ),
+);
+```
+
+Trimming is frame-accurate (the clip is re-encoded) and the reported `duration`
+reflects the trimmed length. Rotation is a cheap container-metadata turn that
+players honour — a 90°/270° turn swaps the displayed dimensions; the stored
+frames are not re-rendered. Colour adjustment (`brightness` / `contrast` /
+`saturation`, CIColorControls semantics) is baked into the output pixels —
+Android via a GL shader, Apple via a `CIColorControls` video composition — so
+exact pixel parity across platforms is not guaranteed. Either trim bound is
+optional, and an empty `VideoEdit` (or `null`) leaves the video untouched.
+
 ### Listen to progress
 
 Single video — a `Stream<double>` from `0` to `100`:
@@ -380,6 +412,7 @@ try {
 | `videoFormat` | `VideoFormat` | | `h264` | Output codec: `h264` or `h265` (HEVC). Falls back to H.264 when HEVC isn't supported. See [`VideoFormat`](#videoformat). |
 | `background` | `BackgroundConfig?` | | `null` | Keep running while the app is backgrounded. See [`BackgroundConfig`](#backgroundconfig). |
 | `audio` | `AudioConfig?` | | `null` | Re-encode the audio track as AAC. See [`AudioConfig`](#audioconfig). |
+| `edit` | `VideoEdit?` | | `null` | Trim and/or rotate while compressing. See [`VideoEdit`](#videoedit). |
 
 ### `compressVideos()` → `Future<List<Result>>`
 
@@ -400,6 +433,7 @@ try {
 | `videoFormat` | `VideoFormat` | | `h264` | Output codec for every video: `h264` or `h265` (HEVC). See [`VideoFormat`](#videoformat). |
 | `background` | `BackgroundConfig?` | | `null` | Keep the whole batch running while backgrounded. See [`BackgroundConfig`](#backgroundconfig). |
 | `audio` | `AudioConfig?` | | `null` | Re-encode the audio track as AAC. See [`AudioConfig`](#audioconfig). |
+| `edit` | `VideoEdit?` | | `null` | Trim and/or rotate every video. See [`VideoEdit`](#videoedit). |
 
 ### `getCompressionEstimate()` → `Future<CompressionEstimate>`
 
@@ -426,6 +460,19 @@ Predicts the output **without transcoding**. The parameters mirror the ones on `
 | `videoWidth` | `int?` | | `null` | Custom width in pixels. Must be set with `videoHeight`. |
 | `targetSizeMb` | `int?` | | `null` | Target maximum output size in MB. The compressor solves for the video bitrate (clamped to a 2 Mbps floor and the source bitrate). Mutually exclusive with `videoBitrateInMbps`; must be `> 0`. Whether it was achievable is reported by [`OnSuccess.targetSizeMet`](#result-types). Single-pass and approximate. |
 | `videoFps` | `int?` | | `null` | Target output frame rate. Downsample-only — a value at or above the source rate leaves it unchanged (frames are never duplicated). Must be `> 0`. |
+
+### `VideoEdit`
+
+Lightweight native edits applied while compressing. Passed as `edit:` to `compressVideo` / `compressVideos`; every field is optional and an empty `VideoEdit` (or `null`) leaves the video untouched.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|:--------:|---------|-------------|
+| `trimStartMs` | `int?` | | `null` | Start of the kept range, in milliseconds (`>= 0`). The output timeline is rebased to `0`. |
+| `trimEndMs` | `int?` | | `null` | End of the kept range, in milliseconds. Must be greater than `trimStartMs` (or `0` when no start is given). |
+| `rotationDegrees` | `int?` | | `null` | Quarter-turn applied on top of the source orientation: `0`, `90`, `180`, or `270`. Cheap container-metadata rotation — a 90°/270° turn swaps the displayed dimensions. |
+| `brightness` | `double?` | | `null` | Brightness in `-1.0..1.0` (`0` = no change), additive. Clamped on the wire. |
+| `contrast` | `double?` | | `null` | Contrast in `0.0..2.0` (`1` = no change). Clamped on the wire. |
+| `saturation` | `double?` | | `null` | Saturation in `0.0..2.0` (`1` = no change, `0` = grayscale). Clamped on the wire. |
 
 ### `AudioConfig`
 

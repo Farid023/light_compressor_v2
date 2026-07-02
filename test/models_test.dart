@@ -368,4 +368,115 @@ void main() {
       expect(() => AudioConfig(sampleRate: 0), throwsA(isA<AssertionError>()));
     });
   });
+
+  group('VideoEdit', () {
+    test('defaults to null fields', () {
+      const edit = VideoEdit();
+      expect(edit.trimStartMs, isNull);
+      expect(edit.trimEndMs, isNull);
+      expect(edit.rotationDegrees, isNull);
+    });
+
+    test('stores values', () {
+      const edit = VideoEdit(
+        trimStartMs: 1000,
+        trimEndMs: 5000,
+        rotationDegrees: 90,
+      );
+      expect(edit.trimStartMs, 1000);
+      expect(edit.trimEndMs, 5000);
+      expect(edit.rotationDegrees, 90);
+    });
+
+    test('toMap serializes all keys (null when unset)', () {
+      expect(const VideoEdit().toMap(), <String, dynamic>{
+        'trimStartMs': null,
+        'trimEndMs': null,
+        'rotationDegrees': null,
+        'brightness': null,
+        'contrast': null,
+        'saturation': null,
+      });
+      expect(
+        const VideoEdit(
+          trimStartMs: 1000,
+          trimEndMs: 5000,
+          rotationDegrees: 180,
+        ).toMap(),
+        <String, dynamic>{
+          'trimStartMs': 1000,
+          'trimEndMs': 5000,
+          'rotationDegrees': 180,
+          'brightness': null,
+          'contrast': null,
+          'saturation': null,
+        },
+      );
+    });
+
+    test('asserts trimStartMs is non-negative', () {
+      expect(() => VideoEdit(trimStartMs: -1), throwsA(isA<AssertionError>()));
+    });
+
+    test('asserts trimEndMs is greater than trimStartMs', () {
+      expect(
+        () => VideoEdit(trimStartMs: 5000, trimEndMs: 5000),
+        throwsA(isA<AssertionError>()),
+      );
+      expect(
+        () => VideoEdit(trimStartMs: 5000, trimEndMs: 4000),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('asserts trimEndMs is positive when no start is given', () {
+      expect(() => VideoEdit(trimEndMs: 0), throwsA(isA<AssertionError>()));
+    });
+
+    test('accepts trimEndMs alone (trim from 0)', () {
+      const edit = VideoEdit(trimEndMs: 5000);
+      expect(edit.trimStartMs, isNull);
+      expect(edit.trimEndMs, 5000);
+    });
+
+    test('asserts rotationDegrees is a quarter turn', () {
+      expect(
+        () => VideoEdit(rotationDegrees: 45),
+        throwsA(isA<AssertionError>()),
+      );
+      expect(
+        () => VideoEdit(rotationDegrees: 360),
+        throwsA(isA<AssertionError>()),
+      );
+      expect(
+        () => VideoEdit(rotationDegrees: -90),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('accepts every quarter-turn rotation value', () {
+      for (final int deg in <int>[0, 90, 180, 270]) {
+        expect(VideoEdit(rotationDegrees: deg).rotationDegrees, deg);
+      }
+    });
+
+    test('stores color values', () {
+      const edit = VideoEdit(brightness: 0.2, contrast: 1.3, saturation: 0.5);
+      expect(edit.brightness, 0.2);
+      expect(edit.contrast, 1.3);
+      expect(edit.saturation, 0.5);
+    });
+
+    test('toMap clamps color to their valid ranges', () {
+      final map = const VideoEdit(
+        brightness: 5.0, // > 1.0
+        contrast: -2.0, // < 0.0
+        saturation: 9.0, // > 2.0
+      ).toMap();
+      expect(map['brightness'], 1.0);
+      expect(map['contrast'], 0.0);
+      expect(map['saturation'], 2.0);
+      expect(const VideoEdit(brightness: -3.0).toMap()['brightness'], -1.0);
+    });
+  });
 }

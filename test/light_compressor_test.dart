@@ -1229,5 +1229,86 @@ void main() {
       expect(args['audioBitrate'], 64000);
       expect(args['audioSampleRate'], isNull);
     });
+
+    // --- Phase 9a/9b: trim & rotate ---
+
+    test('compressVideo forwards the edit map (trim + rotate)', () async {
+      mockedResponse = jsonEncode({'onSuccess': '/path/to/output.mp4'});
+
+      await compressor.compressVideo(
+        path: '/path/to/input.mp4',
+        videoQuality: VideoQuality.medium,
+        video: Video(videoName: 'output.mp4'),
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+        edit: const VideoEdit(
+          trimStartMs: 1000,
+          trimEndMs: 4000,
+          rotationDegrees: 90,
+        ),
+      );
+
+      final arguments = log.first.arguments as Map<dynamic, dynamic>;
+      final edit = arguments['edit'] as Map<dynamic, dynamic>;
+      expect(edit['trimStartMs'], 1000);
+      expect(edit['trimEndMs'], 4000);
+      expect(edit['rotationDegrees'], 90);
+    });
+
+    test('compressVideo sends a null edit when not requested', () async {
+      mockedResponse = jsonEncode({'onSuccess': '/path/to/output.mp4'});
+
+      await compressor.compressVideo(
+        path: '/path/to/input.mp4',
+        videoQuality: VideoQuality.medium,
+        video: Video(videoName: 'output.mp4'),
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+      );
+
+      final arguments = log.first.arguments as Map<dynamic, dynamic>;
+      expect(arguments.containsKey('edit'), isTrue);
+      expect(arguments['edit'], isNull);
+    });
+
+    test('compressVideos forwards the edit map', () async {
+      batchResponse = <Map<String, dynamic>>[
+        {'onSuccess': '/out0.mp4'},
+      ];
+
+      await compressor.compressVideos(
+        paths: ['/a.mp4'],
+        videoNames: ['out0.mp4'],
+        videoQuality: VideoQuality.medium,
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+        edit: const VideoEdit(trimStartMs: 500, rotationDegrees: 270),
+      );
+
+      final args = log.last.arguments as Map<dynamic, dynamic>;
+      final edit = args['edit'] as Map<dynamic, dynamic>;
+      expect(edit['trimStartMs'], 500);
+      expect(edit['trimEndMs'], isNull);
+      expect(edit['rotationDegrees'], 270);
+    });
+
+    test('compressVideo forwards color edits (clamped on the wire)', () async {
+      mockedResponse = jsonEncode({'onSuccess': '/path/to/output.mp4'});
+
+      await compressor.compressVideo(
+        path: '/path/to/input.mp4',
+        videoQuality: VideoQuality.medium,
+        video: Video(videoName: 'output.mp4'),
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+        edit: const VideoEdit(brightness: 0.3, contrast: 1.5, saturation: 0.0),
+      );
+
+      final arguments = log.first.arguments as Map<dynamic, dynamic>;
+      final edit = arguments['edit'] as Map<dynamic, dynamic>;
+      expect(edit['brightness'], 0.3);
+      expect(edit['contrast'], 1.5);
+      expect(edit['saturation'], 0.0);
+    });
   });
 }

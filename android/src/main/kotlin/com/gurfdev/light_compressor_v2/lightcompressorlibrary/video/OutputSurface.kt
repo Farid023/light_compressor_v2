@@ -4,7 +4,11 @@ import android.graphics.SurfaceTexture
 import android.graphics.SurfaceTexture.OnFrameAvailableListener
 import android.view.Surface
 
-class OutputSurface : OnFrameAvailableListener {
+class OutputSurface(
+    private val brightness: Float = 0f,
+    private val contrast: Float = 1f,
+    private val saturation: Float = 1f,
+) : OnFrameAvailableListener {
 
     private var mSurfaceTexture: SurfaceTexture? = null
     private var mSurface: Surface? = null
@@ -25,7 +29,7 @@ class OutputSurface : OnFrameAvailableListener {
      * with the SurfaceTexture.
      */
     private fun setup() {
-        mTextureRender = TextureRenderer()
+        mTextureRender = TextureRenderer(brightness, contrast, saturation)
         mTextureRender?.let {
             it.surfaceCreated()
 

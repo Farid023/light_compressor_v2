@@ -112,6 +112,9 @@ class LightCompressor {
   /// * [audio] — When provided, re-encodes the audio track as AAC with the
   ///   given bitrate/sample-rate; see [AudioConfig]. Ignored when [disableAudio]
   ///   is `true`. Defaults to `null` (the source audio is copied through).
+  /// * [edit] — Optional native edits applied during compression: trim to a
+  ///   time range and/or rotate by a quarter-turn; see [VideoEdit]. Defaults to
+  ///   `null` (no edits).
   ///
   /// Returns a [Result] which can be:
   /// * [OnSuccess] containing the output destination file path and statistics.
@@ -134,6 +137,7 @@ class LightCompressor {
     VideoFormat videoFormat = VideoFormat.h264,
     BackgroundConfig? background,
     AudioConfig? audio,
+    VideoEdit? edit,
   }) async {
     final Map<String, dynamic> response = jsonDecode(
       await _channel
@@ -159,6 +163,7 @@ class LightCompressor {
             'saveInGallery': ios.saveInGallery,
             'videoFormat': videoFormat.name,
             'background': background?.toMap(),
+            'edit': edit?.toMap(),
           }),
     );
 
@@ -245,6 +250,9 @@ class LightCompressor {
   /// [twoPass] enables two-pass encoding to land closer to [targetSizeMb] (it is
   /// ignored without a target). See `Video.twoPass` for the trade-offs; the
   /// number of passes run per video is reported by `OnSuccess.passesUsed`.
+  ///
+  /// [edit] applies the same native trim/rotate edits to every video; see
+  /// [VideoEdit].
   Future<List<Result>> compressVideos({
     required List<String> paths,
     required List<String> videoNames,
@@ -263,6 +271,7 @@ class LightCompressor {
     VideoFormat videoFormat = VideoFormat.h264,
     BackgroundConfig? background,
     AudioConfig? audio,
+    VideoEdit? edit,
   }) async {
     assert(
       paths.length == videoNames.length,
@@ -304,6 +313,7 @@ class LightCompressor {
           'isMinBitrateCheckEnabled': isMinBitrateCheckEnabled,
           'videoFormat': videoFormat.name,
           'background': background?.toMap(),
+          'edit': edit?.toMap(),
         });
 
     if (response == null) {

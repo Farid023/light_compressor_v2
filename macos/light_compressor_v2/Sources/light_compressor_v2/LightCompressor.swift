@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreImage
 import ImageIO
 
 /// Desired quality level for video compression.
@@ -122,6 +123,12 @@ public struct LightCompressor {
             public let videoSize: CGSize?
             public let videoFormat: VideoFormat
             public let twoPass: Bool
+            public let trimStartMs: Int?
+            public let trimEndMs: Int?
+            public let rotationDegrees: Int?
+            public let brightness: Double?
+            public let contrast: Double?
+            public let saturation: Double?
 
             public init(
                 quality: VideoQuality = .medium,
@@ -135,7 +142,13 @@ public struct LightCompressor {
                 videoFps: Int? = nil,
                 audioBitrate: Int? = nil,
                 audioSampleRate: Int? = nil,
-                twoPass: Bool = false
+                twoPass: Bool = false,
+                trimStartMs: Int? = nil,
+                trimEndMs: Int? = nil,
+                rotationDegrees: Int? = nil,
+                brightness: Double? = nil,
+                contrast: Double? = nil,
+                saturation: Double? = nil
             ) {
                 self.quality = quality
                 self.isMinBitrateCheckEnabled = isMinBitrateCheckEnabled
@@ -149,6 +162,12 @@ public struct LightCompressor {
                 self.videoSize = videoSize
                 self.videoFormat = videoFormat
                 self.twoPass = twoPass
+                self.trimStartMs = trimStartMs
+                self.trimEndMs = trimEndMs
+                self.rotationDegrees = rotationDegrees
+                self.brightness = brightness
+                self.contrast = contrast
+                self.saturation = saturation
             }
         }
 
@@ -461,7 +480,27 @@ public struct LightCompressor {
                     keepOriginalResolution: configuration.keepOriginalResolution)
                 : (Int(configuration.videoSize!.width), Int(configuration.videoSize!.height))
 
-            let durationInSeconds = videoAsset.duration.seconds
+            // Native editing (Phase 9a): resolve the kept time range. The output
+            // timeline is rebased to 0 (startSession at trimRange.start), so the
+            // reported duration, the size solver and the progress denominator all
+            // use the trimmed length. trimRange stays nil when no trim is asked.
+            let fullDuration = videoAsset.duration
+            let trimRange: CMTimeRange?
+            if configuration.trimStartMs != nil || configuration.trimEndMs != nil {
+                let start = min(
+                    CMTime(
+                        value: CMTimeValue(max(0, configuration.trimStartMs ?? 0)),
+                        timescale: 1000),
+                    fullDuration)
+                let end = configuration.trimEndMs
+                    .map { min(CMTime(value: CMTimeValue($0), timescale: 1000), fullDuration) }
+                    ?? fullDuration
+                trimRange = CMTimeRange(start: start, end: end)
+            } else {
+                trimRange = nil
+            }
+            let durationInSeconds = trimRange
+                .map { max(0.0, CMTimeGetSeconds($0.duration)) } ?? fullDuration.seconds
 
             // Choose the target video bitrate. Precedence: an explicit
             // videoBitrateInMbps wins; else a requested target output size is
@@ -530,6 +569,7 @@ public struct LightCompressor {
                 size: size, bitrate: newBitrate, resolvedFormat: resolvedFormat,
                 frameDropEnabled: frameDropEnabled,
                 frameIntervalSeconds: frameIntervalSeconds, totalFrames: totalFrames,
+                trimRange: trimRange,
                 configuration: configuration, destination: destination,
                 compressionOperation: compressionOperation,
                 progressQueue: progressQueue, progressHandler: progressHandler
@@ -568,6 +608,7 @@ public struct LightCompressor {
                     size: size, bitrate: Int(adjusted), resolvedFormat: resolvedFormat,
                     frameDropEnabled: frameDropEnabled,
                     frameIntervalSeconds: frameIntervalSeconds, totalFrames: totalFrames,
+                    trimRange: trimRange,
                     configuration: configuration, destination: tempDest,
                     compressionOperation: compressionOperation,
                     progressQueue: progressQueue, progressHandler: progressHandler
@@ -622,6 +663,7 @@ public struct LightCompressor {
         frameDropEnabled: Bool,
         frameIntervalSeconds: Double,
         totalFrames: Double,
+        trimRange: CMTimeRange?,
         configuration: Video.Configuration,
         destination: URL,
         compressionOperation: Compression,
@@ -645,7 +687,14 @@ public struct LightCompressor {
                 height: size.height,
                 format: resolvedFormat))
         videoWriterInput.expectsMediaDataInRealTime = true
-        videoWriterInput.transform = videoTrack.preferredTransform
+        // Rotate (9b): compose the requested quarter-turn onto the source
+        // orientation (cheap container-metadata rotation).
+        var outputTransform = videoTrack.preferredTransform
+        if let deg = configuration.rotationDegrees, deg != 0 {
+            outputTransform = outputTransform.concatenating(
+                CGAffineTransform(rotationAngle: CGFloat(Double(deg) * .pi / 180.0)))
+        }
+        videoWriterInput.transform = outputTransform
 
         // .mp4 container to match the .mp4 output filename — important for
         // HEVC interop with players/Android that key off the extension.
@@ -660,13 +709,45 @@ public struct LightCompressor {
             kCVPixelBufferPixelFormatTypeKey as String:
                 Int(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) as AnyObject
         ]
-        let videoReaderOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: videoReaderSettings)
+        // Color adjust (Phase 9c): when any color knob is set, read through a
+        // video composition that applies CIColorControls; otherwise keep the
+        // cheap track output. Identity = brightness 0, contrast 1, saturation 1.
+        let videoReaderOutput: AVAssetReaderOutput
+        if configuration.brightness != nil || configuration.contrast != nil
+            || configuration.saturation != nil {
+            let brightness = configuration.brightness ?? 0
+            let contrast = configuration.contrast ?? 1
+            let saturation = configuration.saturation ?? 1
+            let composition = AVVideoComposition(
+                asset: videoAsset,
+                applyingCIFiltersWithHandler: { request in
+                    let filter = CIFilter(name: "CIColorControls")
+                    filter?.setValue(
+                        request.sourceImage.clampedToExtent(), forKey: kCIInputImageKey)
+                    filter?.setValue(brightness, forKey: kCIInputBrightnessKey)
+                    filter?.setValue(contrast, forKey: kCIInputContrastKey)
+                    filter?.setValue(saturation, forKey: kCIInputSaturationKey)
+                    let filtered = filter?.outputImage?
+                        .cropped(to: request.sourceImage.extent) ?? request.sourceImage
+                    request.finish(with: filtered, context: nil)
+                })
+            let compOutput = AVAssetReaderVideoCompositionOutput(
+                videoTracks: [videoTrack], videoSettings: videoReaderSettings)
+            compOutput.videoComposition = composition
+            videoReaderOutput = compOutput
+        } else {
+            videoReaderOutput = AVAssetReaderTrackOutput(
+                track: videoTrack, outputSettings: videoReaderSettings)
+        }
 
         guard let videoReader = try? AVAssetReader(asset: videoAsset) else {
             onPassComplete(.failure(CompressionError(title: "Failed to create video reader")))
             return
         }
         videoReader.add(videoReaderOutput)
+        // Trim (9a): restrict the read to the kept range; the output is rebased
+        // to 0 via startSession below.
+        if let trimRange { videoReader.timeRange = trimRange }
 
         // Audio setup — only wire up an audio input when there is audio to
         // copy and it isn't disabled. Adding an input that is never fed and
@@ -716,11 +797,12 @@ public struct LightCompressor {
                 track: audioTrack, outputSettings: readerSettings)
             audioReader = try? AVAssetReader(asset: videoAsset)
             audioReader?.add(audioReaderOutput!)
+            if let trimRange { audioReader?.timeRange = trimRange }
         }
 
         videoWriter.startWriting()
         videoReader.startReading()
-        videoWriter.startSession(atSourceTime: .zero)
+        videoWriter.startSession(atSourceTime: trimRange?.start ?? .zero)
 
         var isFirstBuffer = true
         let processingQueue = DispatchQueue(label: "processingQueue1", qos: .background)
@@ -763,7 +845,7 @@ public struct LightCompressor {
                        audioReader.status != .reading, audioReader.status != .completed {
 
                         audioReader.startReading()
-                        videoWriter.startSession(atSourceTime: .zero)
+                        videoWriter.startSession(atSourceTime: trimRange?.start ?? .zero)
 
                         let audioQueue = DispatchQueue(label: "processingQueue2", qos: .background)
                         audioWriterInput.requestMediaDataWhenReady(on: audioQueue) {

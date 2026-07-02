@@ -1,5 +1,30 @@
 # Changelog
 
+# 1.7.0
+
+### New
+
+- **Lightweight native editing** — pass an optional **`VideoEdit`** as `edit:` to
+  `compressVideo` / `compressVideos` to trim and/or rotate while compressing
+  (still 100% native — no ffmpeg):
+  - **Trim** — `trimStartMs` / `trimEndMs` keep a time range; the output timeline
+    is rebased to start at `0` and the reported `duration` reflects the trimmed
+    length. Frame-accurate (the clip is re-encoded). Either bound is optional.
+  - **Rotate** — `rotationDegrees` (`0` / `90` / `180` / `270`) applies a
+    quarter-turn on top of the source orientation. This is a cheap
+    container-metadata rotation (no extra pixel pass) that players honour — a 90°
+    turn swaps the displayed dimensions.
+  - **Colour adjust** — `brightness` (`-1..1`), `contrast` (`0..2`) and
+    `saturation` (`0..2`) tweak the picture (CIColorControls semantics; `0` / `1`
+    / `1` = no change). Baked into the output pixels — Android via a GL shader,
+    Apple via a `CIColorControls` video composition. Exact cross-platform pixel
+    parity is not guaranteed.
+- Example app gains trim start/end (ms) fields, a 0/90/180/270 rotate selector and
+  brightness/contrast/saturation sliders in the single-video flow.
+
+All additions are additive and fully backward compatible — existing APIs are
+unchanged.
+
 # 1.6.0
 
 ### New
