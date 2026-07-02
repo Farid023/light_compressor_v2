@@ -50,10 +50,14 @@ plugin:
   `startBatchCompression`, `cancelCompression`, `clearCache`, `getMediaInfo`,
   `getVideoThumbnail`, `getVideoThumbnails`, `getCompressionEstimate`,
   `isCompressing`.
-- **EventChannel `compression/stream`** — single-video progress: a bare `double`
-  `0`–`100`.
+- **EventChannel `compression/stream`** — single-video progress: a map
+  `{ percent, bytesProcessed, etaMs, elapsedMs }`. `etaMs` is `-1`
+  until estimable. Dart's `CompressionProgress.fromEvent` also still accepts a
+  **bare `double`** (the pre-1.8.0 wire), so a Dart upgrade never hard-breaks
+  against an older native; `onProgressUpdated` extracts `percent`.
 - **EventChannel `compression/batch-stream`** — batch events: maps tagged
-  `type: "progress"` (`index`, `percent`, `overallPercent`) or `type: "result"`
+  `type: "progress"` (`index`, `percent`, `overallPercent`, plus the same
+  `bytesProcessed` / `etaMs` / `elapsedMs`) or `type: "result"`
   (an `index` plus a result map).
 
 **Result maps** (what the natives send back; parsed by `_resultFromMap` in
@@ -92,6 +96,13 @@ Dart `_failureTypeFromWire` / `_exceptionFor`. **Change one, change all four.**
   `paths`, and one video failing must never abort the others (its slot becomes an
   `OnFailure`). Verified by the *batch resilience* group in
   [`example/integration_test/plugin_integration_test.dart`](example/integration_test/plugin_integration_test.dart).
+- **Batch concurrency is capped, never zero.** A batch transcodes at most
+  `maxConcurrent` videos at once (`>= 1`); unset keeps each platform's historic
+  default (Android `Semaphore(2)`; Apple started them all). Whatever the cap,
+  **every** input index must still reach exactly one terminal reply — so the cap
+  throttles *starts*, it must never *skip* a video (Apple keeps starting queued
+  videos even after a cancel, so each one still reports). Don't let throttling
+  break the "same order / every slot replies" guarantee above.
 - **HEVC fallback is silent.** `videoFormat: h265` falls back to H.264 when the
   device has no hardware HEVC encoder; the caller learns the truth only from
   `OnSuccess.usedFormat`. Never *fail* just because HEVC is unavailable.
@@ -136,7 +147,9 @@ encodes/decodes the channel contract.
   (`compressVideo`, `compressVideos`, `getMediaInfo`, `getVideoThumbnail`,
   `getVideoThumbnails`, `getCompressionEstimate`, `isCompressing`, `clearCache`,
   `cancelCompression`); the lazy broadcast streams
-  `onProgressUpdated` (`Stream<double>`) and `onBatchUpdate` (`Stream<BatchEvent>`);
+  `onProgressUpdated` (`Stream<double>`), `onProgressDetail`
+  (`Stream<CompressionProgress>`, both mapped from one shared `compression/stream`
+  broadcast) and `onBatchUpdate` (`Stream<BatchEvent>`);
   `_resultFromMap` (the decoder shared by the batch return value and
   `BatchItemCompleted` events); the wire decoders `_videoFormatFromWire` /
   `_failureTypeFromWire`; the failure→exception mappers `_exceptionFor` (compress)
@@ -145,6 +158,10 @@ encodes/decodes the channel contract.
   `Result` type and its `OnSuccess` / `OnFailure` / `OnCancelled` subtypes (the
   `OnSuccess` carries `usedFormat`, `targetSizeMet`, and `passesUsed`), plus
   the `CompressionFailureType` enum.
+- **[`src/compression_progress.dart`](lib/src/compression_progress.dart)** — the
+  `CompressionProgress` model (`percent` + `bytesProcessed` / `etaMs` /
+  `elapsedMs`) behind `onProgressDetail`; its `fromEvent` accepts both the map
+  wire and a bare-`double` percent (back-compat).
 - **[`src/batch_event.dart`](lib/src/batch_event.dart)** — `BatchEvent` with
   `BatchProgress` and `BatchItemCompleted`.
 - **[`src/media_info.dart`](lib/src/media_info.dart)** — `MediaInfo` + `fromMap`;
@@ -177,9 +194,10 @@ encodes/decodes the channel contract.
 
 - **Argument-map keys are the contract.** The keys passed to `invokeMethod`
   (`videoName`, `isMinBitrateCheckEnabled`, `saveAt`, `videoFormat`, `background`,
-  the Phase 8 keys `targetSizeBytes` / `videoFps` / `audioBitrate` /
-  `audioSampleRate` / `twoPass`, and the Phase 9 nested `edit` map
-  (`trimStartMs` / `trimEndMs` / `rotationDegrees`), …) must match the keys the
+  the output-control keys `targetSizeBytes` / `videoFps` / `audioBitrate` /
+  `audioSampleRate` / `twoPass`, the nested `edit` map
+  (`trimStartMs` / `trimEndMs` / `rotationDegrees`), the batch-only
+  `maxConcurrent`, and the opt-in `debugLogging`, …) must match the keys the
   natives read via
   `call.argument(...)` / `args[...]`. Renaming a key here means renaming it in all
   three natives.
@@ -218,7 +236,8 @@ a vendored fork of the LightCompressor library:
 - [`VideoCompressor.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/VideoCompressor.kt)
   — entry `object` (a `MainScope` coroutine scope). `start()` validates, then
   `doVideoCompression()` launches one `Dispatchers.IO` coroutine per URI, **bounded
-  by `Semaphore(MAX_CONCURRENT_COMPRESSIONS = 2)`** — running a whole batch in
+  by a `Semaphore` sized from `Configuration.maxConcurrent` (coerced `>= 1`), or
+  `MAX_CONCURRENT_COMPRESSIONS = 2` when unset** — running a whole batch in
   parallel oversubscribes the hardware codecs and surfaces as "Surface frame wait
   timed out". `cancel()` flips `isRunning = false` and cancels all jobs.
   `classifyThrowable` maps `SecurityException`→`PERMISSION`,
@@ -226,15 +245,23 @@ a vendored fork of the LightCompressor library:
   `VideoQuality` and `VideoFormat` enums.
 - [`compressor/Compressor.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/compressor/Compressor.kt)
   — the actual decode→GL→encode→`MediaMuxer` pipeline; the `@Volatile isRunning`
-  flag lives here. Also home to the Phase 8 logic: the target-size bitrate solver
+  flag lives here. Also home to the target-size bitrate solver
   (`MIN_BITRATE` floor), frame-dropping for `videoFps`, the AAC audio re-encode
   (`transcodeAudioToBuffer` + muxer track ordering), and the two-pass corrective
   loop (`TWO_PASS_TOLERANCE`, a fresh `MediaExtractor` per pass, temp-file replace).
-  Phase 9 adds trim — `seekTo(trimStartUs)`, drop-before / EOS-after the range in
+  Native editing: trim — `seekTo(trimStartUs)`, drop-before / EOS-after the range in
   the decode loop, PTS rebased to 0 (video + both audio paths) — rotate, as a
   `setOrientationHint` applied *after* the source-rotation normalization — and
   colour, baked by the `TextureRenderer` fragment shader (identity uniforms when
   no colour, so it stays free).
+  **Large-file limits (review):** `transcodeAudioToBuffer` holds the
+  whole encoded audio track in memory, so the AAC re-encode path's memory scales
+  with audio *duration* (the no-`AudioConfig` passthrough copy doesn't buffer) —
+  a streaming rewrite is a known follow-up. And `MediaMuxer`'s MP4 writer uses
+  32-bit box offsets, so outputs near **4 GB** can fail/truncate. Both are
+  documented in the README's "Large files & memory". (The size/bitrate/PTS math
+  is `Long`/`Double`; only Apple's `getMediaInfo` had a 32-bit `fileSize`
+  truncation, fixed in 11d via `int64Value`.)
 - [`config/Configuration.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/config/Configuration.kt)
   — the `Configuration` settings data class **and** the `StorageConfiguration`
   strategies that decide where output lands: `SharedStorageConfiguration`
@@ -292,16 +319,22 @@ to CocoaPods. Sources sit under `…/Sources/light_compressor_v2/`:
   silent H.264 fallback, progress + completion callbacks, the typed `MediaError`,
   the static `mediaInfo` / `thumbnail` / `clearCache` helpers, and the
   `estimate(...)` behind `getCompressionEstimate`. The `cancel` flag rides on the
-  returned `Compression` handle. Phase 8 adds the target-size solver, frame-dropping
+  returned `Compression` handle. It also has the target-size solver, frame-dropping
   for `videoFps`, the AAC audio re-encode, and the two-pass corrective loop — the
   transcode body is factored into a re-callable `encodePass(...)` (each pass streams
   0..<100, so the terminal signal is the result, never a mid-stream 100) driven from
-  the pass-1 completion. Phase 9 adds trim — each reader's `timeRange` + a
+  the pass-1 completion. Native editing: trim — each reader's `timeRange` + a
   `startSession(atSourceTime:)` at the range start (output rebased to 0; reported
   duration = trimmed) — rotate, by composing the quarter-turn onto
   `videoWriterInput.transform` — and colour, by reading through an
   `AVAssetReaderVideoCompositionOutput` driven by a `CIColorControls` filter
   (only when a colour knob is set; otherwise the cheap track output).
+  **Batch throttling:** `compressVideo(videos:)` no longer starts every
+  video at once — the per-video work moved into a nested `startVideo(...)` driven
+  by an async pump on a private serial scheduler that keeps at most
+  `maxConcurrent` (`?? count`, so unset = start-all) in flight, each finishing
+  video freeing its slot via a single `onDone` funnel; the method still returns
+  the `Compression` handle immediately.
 - **`extensions/Encodable.swift`** — the `toJson` used to encode the
   single-compress reply.
 
@@ -342,16 +375,16 @@ The demo app is also the only place the native pipeline runs end-to-end.
     — H.264 / H.265 selection and the automatic fallback (`usedFormat`).
   - [`integration_test/preflight_test.dart`](example/integration_test/preflight_test.dart)
     — `getCompressionEstimate`, batch `getVideoThumbnails`, and `isCompressing`
-    (Phase 7 introspection).
+    (the introspection methods).
   - [`integration_test/target_size_test.dart`](example/integration_test/target_size_test.dart),
     [`fps_test.dart`](example/integration_test/fps_test.dart),
     [`audio_test.dart`](example/integration_test/audio_test.dart), and
     [`two_pass_test.dart`](example/integration_test/two_pass_test.dart) — the
-    Phase 8 options (target size, frame-rate downsample, AAC audio re-encode,
+    output-control options (target size, frame-rate downsample, AAC audio re-encode,
     two-pass). The corrective second pass only runs when pass 1 overshoots, so a
     highly compressible clip stays single-pass (`passesUsed == 1`).
   - [`integration_test/edit_test.dart`](example/integration_test/edit_test.dart)
-    — the Phase 9 editing: trim yields an output of ~the requested length (and
+    — the native editing: trim yields an output of ~the requested length (and
     shorter than the source), a 90° rotate swaps the displayed dims vs an
     unrotated baseline (source-agnostic), and `saturation: 0` desaturates the
     output toward grayscale (decoded via `dart:ui`).
@@ -405,9 +438,10 @@ build step.
   `flutter analyze` must be clean.
 - **Source and code comments are in English** (user-facing communication is in
   Russian).
-- **Releasing:** bump the version in [`pubspec.yaml`](pubspec.yaml) and add a
-  [`CHANGELOG.md`](CHANGELOG.md) entry; [`.pubignore`](.pubignore) (which pub uses
-  *instead of* `.gitignore`) controls what ships. `git push` and
-  `flutter pub publish` are done by the maintainer — the agent environment has no
-  git credentials.
+- **Releasing:** bump the version in [`pubspec.yaml`](pubspec.yaml), add a
+  [`CHANGELOG.md`](CHANGELOG.md) entry, and **update the install snippet version
+  in [`README.md`](README.md)** (the `light_compressor_v2: ^x.y.z` line — easy to
+  forget); [`.pubignore`](.pubignore) (which pub uses *instead of* `.gitignore`)
+  controls what ships. `git push` and `flutter pub publish` are done by the
+  maintainer — the agent environment has no git credentials.
 - **Commit messages** carry no `Co-Authored-By` / agent-attribution trailer.

@@ -49,6 +49,17 @@ public class Compression {
     public var cancel = false
 }
 
+/// A progress sample for one video. `percent` is `0..100`;
+/// `bytesProcessed` is encoded output bytes written so far; `etaMs` is the
+/// estimated time remaining in ms (`-1` while not yet estimable); `elapsedMs`
+/// is time since this encode pass started.
+public struct ProgressInfo {
+    public let percent: Double
+    public let bytesProcessed: Int64
+    public let etaMs: Int64
+    public let elapsedMs: Int64
+}
+
 /// Classifies a compression failure so callers can react programmatically
 /// instead of matching error message text.
 public enum CompressionErrorType: String {
@@ -129,6 +140,12 @@ public struct LightCompressor {
             public let brightness: Double?
             public let contrast: Double?
             public let saturation: Double?
+            // Max videos transcoded at once in a batch. nil starts
+            // them all (the historic behaviour); a set value (>= 1) throttles.
+            public let maxConcurrent: Int?
+            // Opt-in structured debug logging (paths reduced to base
+            // names). Off by default.
+            public let debugLogging: Bool
 
             public init(
                 quality: VideoQuality = .medium,
@@ -148,7 +165,9 @@ public struct LightCompressor {
                 rotationDegrees: Int? = nil,
                 brightness: Double? = nil,
                 contrast: Double? = nil,
-                saturation: Double? = nil
+                saturation: Double? = nil,
+                maxConcurrent: Int? = nil,
+                debugLogging: Bool = false
             ) {
                 self.quality = quality
                 self.isMinBitrateCheckEnabled = isMinBitrateCheckEnabled
@@ -168,6 +187,8 @@ public struct LightCompressor {
                 self.brightness = brightness
                 self.contrast = contrast
                 self.saturation = saturation
+                self.maxConcurrent = maxConcurrent
+                self.debugLogging = debugLogging
             }
         }
 
@@ -192,7 +213,7 @@ public struct LightCompressor {
     private static let MIN_HEIGHT  = 640.0
     private static let MIN_WIDTH   = 360.0
 
-    /// Phase 8d: a two-pass run triggers a corrective second pass only when the
+    /// A two-pass run triggers a corrective second pass only when the
     /// first pass overshoots the target by more than this fraction.
     private static let TWO_PASS_TOLERANCE = 0.10
 
@@ -244,7 +265,9 @@ public struct LightCompressor {
             info["durationMs"] = Int(durationSeconds * 1000.0)
         }
         if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-           let size = (attrs[.size] as? NSNumber)?.intValue {
+           let size = (attrs[.size] as? NSNumber)?.int64Value {
+            // int64Value (not intValue, which is Int32) so files >2 GB report
+            // their true size rather than a truncated/wrapped value.
             info["fileSize"] = size
         }
         if let mimeType = mimeType(for: url) {
@@ -436,19 +459,31 @@ public struct LightCompressor {
     /// - Parameters:
     ///   - videos: The list of videos to compress.
     ///   - progressQueue: The queue on which `progressHandler` is called. Defaults to `.main`.
-    ///   - progressHandler: Called repeatedly with the video index and its current `Progress`.
+    ///   - progressHandler: Called repeatedly with the video index and its current `ProgressInfo`
+    ///     (percent plus elapsed time, estimated time remaining and output bytes so far).
     ///   - completion: Called with the `CompressionResult` for each video.
     /// - Returns: A `Compression` handle that can be used to cancel the operation.
     public func compressVideo(
         videos: [Video],
         progressQueue: DispatchQueue = .main,
-        progressHandler: ((Int, Progress) -> Void)?,
+        progressHandler: ((Int, ProgressInfo) -> Void)?,
         completion: @escaping (CompressionResult) -> Void
     ) -> Compression {
         let compressionOperation = Compression()
         guard !videos.isEmpty else { return compressionOperation }
 
-        for (index, video) in videos.enumerated() {
+        // Cap how many videos transcode at once. nil keeps the
+        // historic behaviour (start them all); a set value (>= 1) throttles.
+        // All scheduler state below is mutated only on `scheduler` (serial).
+        let count = videos.count
+        let limit = max(1, videos.first?.configuration.maxConcurrent ?? count)
+        let scheduler = DispatchQueue(label: "com.lightcompressor.batchScheduler")
+        var nextIndex = 0
+        var inFlight = 0
+
+        // Transcodes one video (the whole pass-1/pass-2 flow) and calls `onDone`
+        // exactly once when it reaches a terminal state, freeing its slot.
+        func startVideo(_ index: Int, _ video: Video, onDone: @escaping () -> Void) {
             let source        = video.source
             let destination   = video.destination
             let configuration = video.configuration
@@ -460,7 +495,8 @@ public struct LightCompressor {
             guard let videoTrack = videoAsset.tracks(withMediaType: .video).first else {
                 completion(.onFailure(index, CompressionError(
                     title: "Cannot find video track", type: .unsupported)))
-                continue
+                onDone()
+                return
             }
 
             let bitrate = videoTrack.estimatedDataRate
@@ -469,7 +505,8 @@ public struct LightCompressor {
                 completion(.onFailure(index, CompressionError(
                     title: "Bitrate is too low for compression. Set isMinBitrateCheckEnabled to false to skip this check."
                 )))
-                continue
+                onDone()
+                return
             }
 
             let videoSize = videoTrack.naturalSize
@@ -480,7 +517,7 @@ public struct LightCompressor {
                     keepOriginalResolution: configuration.keepOriginalResolution)
                 : (Int(configuration.videoSize!.width), Int(configuration.videoSize!.height))
 
-            // Native editing (Phase 9a): resolve the kept time range. The output
+            // Native editing: resolve the kept time range. The output
             // timeline is rebased to 0 (startSession at trimRange.start), so the
             // reported duration, the size solver and the progress denominator all
             // use the trimmed length. trimRange stays nil when no trim is asked.
@@ -540,7 +577,7 @@ public struct LightCompressor {
             let resolvedFormat: VideoFormat =
                 (configuration.videoFormat == .h265 && Self.isHEVCEncodingSupported()) ? .h265 : .h264
 
-            // Phase 8d: two-pass. Enabled only when requested AND a target size
+            // Two-pass. Enabled only when requested AND a target size
             // was set AND it is reachable (a floor-bound pass 1 can't be improved
             // by a lower bitrate). Pass 1 encodes at the solved bitrate; if it
             // overshoots, pass 2 re-encodes at a corrected (lower) bitrate.
@@ -549,8 +586,34 @@ public struct LightCompressor {
             let targetBytes = configuration.targetSizeBytes ?? 0
             let floor = min(Double(Self.MIN_BITRATE), Double(bitrate))
 
-            // Reports the terminal result for this video.
+            // Log the resolved encode plan (paths reduced to base
+            // names), gated on the opt-in flag.
+            if configuration.debugLogging {
+                NSLog("[LightCompressor] plan #\(index) out=\(destination.lastPathComponent) "
+                    + "dims=\(size.width)x\(size.height) bitrate=\(newBitrate) "
+                    + "codec=\(resolvedFormat == .h265 ? "h265" : "h264") "
+                    + "fps=\(configuration.videoFps.map(String.init) ?? "src") "
+                    + "target=\(configuration.targetSizeBytes.map(String.init) ?? "-") "
+                    + "targetMet=\(targetSizeMet) twoPass=\(twoPassEnabled) "
+                    + "rotation=\(configuration.rotationDegrees ?? 0)")
+            }
+
+            // Reports the terminal result for this video and frees its slot.
+            // The single funnel for the encode path; validation failures above
+            // call onDone() directly (they precede the values finish() needs).
             func finish(_ outcome: PassOutcome, passesUsed: Int) {
+                if configuration.debugLogging {
+                    switch outcome {
+                    case .cancelled:
+                        NSLog("[LightCompressor] cancelled #\(index)")
+                    case .failure(let error):
+                        NSLog("[LightCompressor] failed #\(index) \(error.title)")
+                    case .success(let url):
+                        NSLog("[LightCompressor] done #\(index) out=\(url.lastPathComponent) "
+                            + "size=\(Self.fileSize(url)) passes=\(passesUsed) "
+                            + "codec=\(resolvedFormat == .h265 ? "h265" : "h264")")
+                    }
+                }
                 switch outcome {
                 case .cancelled:
                     completion(.onCancelled)
@@ -561,6 +624,7 @@ public struct LightCompressor {
                         index, url, durationInSeconds, resolvedFormat,
                         targetSizeMet, passesUsed))
                 }
+                onDone()
             }
 
             // Pass 1.
@@ -616,7 +680,7 @@ public struct LightCompressor {
                     switch outcome2 {
                     case .cancelled:
                         try? FileManager.default.removeItem(at: tempDest)
-                        completion(.onCancelled)
+                        finish(.cancelled, passesUsed: 2)
                     case .failure:
                         // Pass 2 failed — keep the valid pass-1 output.
                         try? FileManager.default.removeItem(at: tempDest)
@@ -630,10 +694,31 @@ public struct LightCompressor {
             }
         }
 
+        // Pump: start up to `limit` videos now; each finishing video releases
+        // its slot and starts the next queued one. Runs entirely on `scheduler`
+        // (off the caller thread), so this method returns the handle at once.
+        // Every video is started even after a cancel, so each one still reports
+        // a terminal result (a cancelled pass returns quickly) — the batch
+        // caller relies on exactly one reply per index to know it is done.
+        func startNext() {
+            while inFlight < limit && nextIndex < count {
+                let index = nextIndex
+                nextIndex += 1
+                inFlight += 1
+                startVideo(index, videos[index]) {
+                    scheduler.async {
+                        inFlight -= 1
+                        startNext()
+                    }
+                }
+            }
+        }
+        scheduler.async { startNext() }
+
         return compressionOperation
     }
 
-    // MARK: - Two-pass support (Phase 8d)
+    // MARK: - Two-pass support
 
     /// The outcome of a single transcode pass.
     private enum PassOutcome {
@@ -648,7 +733,7 @@ public struct LightCompressor {
     }
 
     /// Runs one full transcode pass at [bitrate], writing to [destination], and
-    /// reports the outcome via [onPassComplete]. Phase 8d calls this once, or a
+    /// reports the outcome via [onPassComplete]. It is called once, or a
     /// second time at a corrected bitrate when the first pass overshot the target.
     /// Progress is reported as 0..<100 (never the terminal 100) so a two-pass run
     /// does not signal "done" between passes; completion is the `onPassComplete`
@@ -668,12 +753,15 @@ public struct LightCompressor {
         destination: URL,
         compressionOperation: Compression,
         progressQueue: DispatchQueue,
-        progressHandler: ((Int, Progress) -> Void)?,
+        progressHandler: ((Int, ProgressInfo) -> Void)?,
         onPassComplete: @escaping (PassOutcome) -> Void
     ) {
         var frameCount = 0
         let progress = Progress(totalUnitCount: Int64(totalFrames))
         var nextEmitSeconds = 0.0
+        // Anchor elapsed time for the ETA projection. Output bytes
+        // are read from the growing destination file at each tick.
+        let passStart = Date()
         // Cap progress just below the total so fractionCompleted never reaches
         // 1.0 (100%); the terminal signal is onPassComplete, not a 100 event.
         let progressCap = max(Int64(totalFrames) - 1, 0)
@@ -709,7 +797,7 @@ public struct LightCompressor {
             kCVPixelBufferPixelFormatTypeKey as String:
                 Int(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) as AnyObject
         ]
-        // Color adjust (Phase 9c): when any color knob is set, read through a
+        // Color adjust: when any color knob is set, read through a
         // video composition that applies CIColorControls; otherwise keep the
         // cheap track output. Identity = brightness 0, contrast 1, saturation 1.
         let videoReaderOutput: AVAssetReaderOutput
@@ -822,7 +910,22 @@ public struct LightCompressor {
                 frameCount += 1
                 if let handler = progressHandler {
                     progress.completedUnitCount = min(Int64(frameCount), progressCap)
-                    progressQueue.async { handler(index, progress) }
+                    let fraction = progress.fractionCompleted
+                    let elapsedMs = Int64(Date().timeIntervalSince(passStart) * 1000)
+                    // ETA only once there is enough signal; -1 = "not yet".
+                    let etaMs: Int64 = fraction > 0.01
+                        ? Int64(Double(elapsedMs) * (1 - fraction) / fraction)
+                        : -1
+                    let outBytes = Int64(
+                        ((try? FileManager.default
+                            .attributesOfItem(atPath: destination.path))?[.size]
+                            as? Int) ?? 0)
+                    let info = ProgressInfo(
+                        percent: fraction * 100,
+                        bytesProcessed: outBytes,
+                        etaMs: etaMs,
+                        elapsedMs: elapsedMs)
+                    progressQueue.async { handler(index, info) }
                 }
 
                 let sampleBuffer = videoReaderOutput.copyNextSampleBuffer()

@@ -7,6 +7,7 @@ import android.os.Build
 import android.util.Log
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionErrorType
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionProgressListener
+import com.gurfdev.light_compressor_v2.lightcompressorlibrary.ProgressInfo
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoFormat
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.config.Configuration
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.CompressorUtils.findTrack
@@ -29,7 +30,7 @@ object Compressor {
     // 2Mbps
     private const val MIN_BITRATE = 2000000
 
-    // Phase 8d: a two-pass run triggers a corrective second pass only when the
+    // A two-pass run triggers a corrective second pass only when the
     // first pass overshoots the target by more than this fraction.
     private const val TWO_PASS_TOLERANCE = 0.10
 
@@ -38,6 +39,13 @@ object Compressor {
     // H.265 High Efficiency Video Coding
     private const val HEVC_MIME = "video/hevc"
     private const val MEDIACODEC_TIMEOUT_DEFAULT = 100L
+
+    // Tag for opt-in debug logging (gated on Configuration.debugLogging).
+    private const val DEBUG_TAG = "LightCompressor"
+
+    /** A path reduced to its base name, for privacy-safe debug logging. */
+    private fun redact(path: String?): String =
+        path?.substringAfterLast('/') ?: "?"
 
     private const val INVALID_BITRATE =
         "The provided bitrate is smaller than what is needed for compression " +
@@ -218,7 +226,7 @@ object Compressor {
         var rotation = rotationData?.toDoubleOrNull()?.toInt() ?: 0
         val bitrate = actualBitrate
 
-        // Native editing (Phase 9a): resolve the kept time range in microseconds.
+        // Native editing: resolve the kept time range in microseconds.
         // The output timeline is rebased to 0, so the *output* duration — used by
         // the size solver, the progress denominator and the reported duration — is
         // the trimmed length. loopTrimEndUs == Long.MAX_VALUE means "to the end".
@@ -232,7 +240,7 @@ object Compressor {
             if (configuration.trimEndMs != null) trimEndUs else Long.MAX_VALUE
         val outDurationUs = (trimEndUs - trimStartUs).coerceAtLeast(1L)
 
-        // Native editing (Phase 9c): color knobs baked by the GL shader. Identity
+        // Native editing: color knobs baked by the GL shader. Identity
         // defaults (brightness 0, contrast 1, saturation 1) mean "no change".
         val colorBrightness = configuration.brightness?.toFloat() ?: 0f
         val colorContrast = configuration.contrast?.toFloat() ?: 1f
@@ -294,7 +302,7 @@ object Compressor {
             else -> rotation
         }
 
-        // Native editing (Phase 9b): apply the requested quarter-turn as a
+        // Native editing: apply the requested quarter-turn as a
         // container orientation hint on top of the (now-upright) output. The GL
         // pipeline draws frames upright regardless of this value, so this is a
         // metadata-only rotation — stored frames are unchanged and players rotate
@@ -310,7 +318,7 @@ object Compressor {
             else
                 MIME_TYPE
 
-        // Phase 8c: re-encode the audio to AAC up front when a bitrate is
+        // Re-encode the audio to AAC up front when a bitrate is
         // requested, capturing the encoder's output format + buffered samples so
         // the muxer track is described correctly. Null keeps the cheap
         // passthrough copy.
@@ -322,7 +330,7 @@ object Compressor {
                 )
             else null
 
-        // Phase 8d: two-pass. Enabled only when requested AND a target size was
+        // Two-pass. Enabled only when requested AND a target size was
         // set AND it is reachable (a floor-bound pass 1 can't be improved by a
         // lower bitrate). Pass 1 encodes at the solved bitrate; if it overshoots,
         // pass 2 re-encodes at a corrected (lower) bitrate. Capped at two passes.
@@ -332,6 +340,18 @@ object Compressor {
             configuration.twoPass && configuration.targetSizeBytes != null && targetSizeMet
         val targetBytes = configuration.targetSizeBytes ?: 0L
         val floor = minOf(MIN_BITRATE, actualBitrate).toDouble()
+
+        if (configuration.debugLogging) {
+            Log.d(
+                DEBUG_TAG,
+                "plan #$index out=${redact(destination)} dims=${newWidth}x$newHeight " +
+                    "bitrate=$newBitrate codec=${if (outputMime == HEVC_MIME) "h265" else "h264"} " +
+                    "fps=${configuration.videoFps ?: "src"} " +
+                    "target=${configuration.targetSizeBytes ?: "-"} targetMet=$targetSizeMet " +
+                    "twoPass=$twoPassEnabled rotation=$rotation " +
+                    "color=[$colorBrightness,$colorContrast,$colorSaturation]",
+            )
+        }
 
         var passesUsed = 1
         // Pass 1 reuses the extractor set up above; start() releases it.
@@ -400,6 +420,21 @@ object Compressor {
             }
         }
 
+        if (configuration.debugLogging) {
+            Log.d(
+                DEBUG_TAG,
+                if (result.success) {
+                    "done #$index out=${redact(result.path)} size=${result.size} " +
+                        "durationMs=${result.duration} passes=$passesUsed " +
+                        "codec=${result.videoFormat}"
+                } else if (result.cancelled) {
+                    "cancelled #$index"
+                } else {
+                    "failed #$index type=${result.errorType} msg=${result.failureMessage}"
+                },
+            )
+        }
+
         return@withContext result.copy(passesUsed = passesUsed)
 
         } finally {
@@ -442,6 +477,13 @@ object Compressor {
             // This is the ground-truth duration and is used in place of the
             // (possibly estimated) input duration when reporting back to Dart.
             var maxPresentationTimeUs = 0L
+
+            // Progress observability. encodeStartMs anchors elapsed
+            // time (and the ETA projection); outputBytes accumulates encoded
+            // video sample bytes written to the muxer (audio is muxed on its own
+            // path, so this is the live video-output size, an indicator).
+            val encodeStartMs = System.currentTimeMillis()
+            var outputBytes = 0L
 
             // Held outside the try so the outer finally can always release the
             // native muxer, including on the early-return error paths below.
@@ -664,6 +706,7 @@ object Compressor {
                                         mediaMuxer.writeSampleData(
                                             videoTrackIndex, encodedData, bufferInfo
                                         )
+                                        outputBytes += bufferInfo.size.toLong()
                                     }
 
                                     outputDone =
@@ -749,9 +792,23 @@ object Compressor {
                                                     }
 
                                                     val progress = (rebasedUs.toFloat() / duration.toFloat() * 100).coerceAtMost(99f)
+                                                    val elapsedMs =
+                                                        System.currentTimeMillis() - encodeStartMs
+                                                    val frac = progress / 100f
+                                                    // ETA only once there is enough signal; -1 = "not yet".
+                                                    val etaMs = if (frac > 0.01f) {
+                                                        (elapsedMs / frac - elapsedMs).toLong()
+                                                    } else {
+                                                        -1L
+                                                    }
                                                     compressionProgressListener.onProgressChanged(
                                                         id,
-                                                        progress
+                                                        ProgressInfo(
+                                                            progress,
+                                                            outputBytes,
+                                                            etaMs,
+                                                            elapsedMs,
+                                                        )
                                                     )
 
                                                     inputSurface.swapBuffers()
@@ -789,7 +846,7 @@ object Compressor {
 
                 if (muxerStarted && audioMuxerTrackIndex >= 0) {
                     if (audioTranscode != null) {
-                        // Phase 8c: write the pre-encoded AAC samples.
+                        // Write the pre-encoded AAC samples.
                         writeBufferedAudio(
                             mediaMuxer,
                             audioMuxerTrackIndex,
@@ -867,14 +924,14 @@ object Compressor {
         val flags: Int,
     )
 
-    /** The captured AAC output format plus all re-encoded samples (Phase 8c). */
+    /** The captured AAC output format plus all re-encoded samples. */
     private class AudioTranscodeResult(
         val format: MediaFormat,
         val samples: List<EncodedAudioSample>,
     )
 
     /**
-     * Phase 8c: decodes the source audio to PCM and re-encodes it to AAC at
+     * Decodes the source audio to PCM and re-encodes it to AAC at
      * [targetBitrate], keeping the source sample rate (no resampler). Buffers the
      * encoded samples and captures the encoder's real output format so the caller
      * can add a correctly-described muxer track before MediaMuxer.start(). Uses
@@ -883,7 +940,7 @@ object Compressor {
      * falls back to the verbatim passthrough copy).
      *
      * The encoded audio is held in memory; this is fine for typical clips but a
-     * very long source means proportionally more memory (see roadmap Phase 11).
+     * very long source means proportionally more memory (a streaming rewrite is planned).
      */
     private fun transcodeAudioToBuffer(
         context: Context,

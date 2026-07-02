@@ -19,24 +19,24 @@ data class Configuration(
     val resizer: VideoResizer? = VideoResizer.auto,
     var videoNames: List<String>,
     var videoFormat: VideoFormat = VideoFormat.H264,
-    // Target output size in bytes (Phase 8a). When set, the compressor solves
+    // Target output size in bytes. When set, the compressor solves
     // for the video bitrate that lands the output at/under it. Appended last so
     // the deprecated positional secondary constructors below stay valid.
     var targetSizeBytes: Long? = null,
-    // Target output frame rate (Phase 8b). Downsample-only; null leaves the
+    // Target output frame rate. Downsample-only; null leaves the
     // source rate unchanged.
     var videoFps: Int? = null,
-    // AAC audio re-encode controls (Phase 8c). When [audioBitrate] is set the
+    // AAC audio re-encode controls. When [audioBitrate] is set the
     // audio is re-encoded at that bitrate. NOTE: Android re-encodes at the
     // SOURCE sample rate (no resampler), so [audioSampleRate] is carried for API
     // parity but not applied here; it is honored on Apple.
     var audioBitrate: Int? = null,
     var audioSampleRate: Int? = null,
-    // Two-pass encoding (Phase 8d). When true AND [targetSizeBytes] is set, the
+    // Two-pass encoding. When true AND [targetSizeBytes] is set, the
     // compressor re-encodes once more at a corrected bitrate if the first pass
     // overshot the target. Ignored without a target.
     var twoPass: Boolean = false,
-    // Native editing (Phase 9). [trimStartMs]/[trimEndMs] select the kept range
+    // Native editing. [trimStartMs]/[trimEndMs] select the kept range
     // in milliseconds (the output timeline is rebased to 0); [rotationDegrees]
     // adds a quarter-turn (0/90/180/270) on top of the source orientation. All
     // null = no edit. Appended last so the deprecated positional constructors
@@ -44,11 +44,17 @@ data class Configuration(
     var trimStartMs: Long? = null,
     var trimEndMs: Long? = null,
     var rotationDegrees: Int? = null,
-    // Color adjust (Phase 9c). brightness -1..1 (0 = none), contrast/saturation
+    // Color adjust. brightness -1..1 (0 = none), contrast/saturation
     // 0..2 (1 = none); null leaves the channel unchanged. Baked by the GL shader.
     var brightness: Double? = null,
     var contrast: Double? = null,
     var saturation: Double? = null,
+    // Max videos transcoded at once in a batch. null keeps the
+    // default cap (MAX_CONCURRENT_COMPRESSIONS); coerced to >= 1 when sized.
+    var maxConcurrent: Int? = null,
+    // Opt-in structured debug logging. Paths are reduced to base
+    // names in the logs. Off by default.
+    var debugLogging: Boolean = false,
 ) {
     @Deprecated("Use VideoResizer to override the output video dimensions.", ReplaceWith("Configuration(quality, isMinBitrateCheckEnabled, videoBitrateInMbps, disableAudio, resizer = if (keepOriginalResolution) null else VideoResizer.auto, videoNames)"))
     constructor(

@@ -152,14 +152,19 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
                         rotationDegrees: edit?["rotationDegrees"] as? Int,
                         brightness: edit?["brightness"] as? Double,
                         contrast: edit?["contrast"] as? Double,
-                        saturation: edit?["saturation"] as? Double))
+                        saturation: edit?["saturation"] as? Double,
+                        debugLogging: args["debugLogging"] as? Bool ?? false))
             ],
             progressQueue: .main,
             progressHandler: { [weak self] _, progress in
                 guard let self else { return }
-                let percent = Float(progress.fractionCompleted * 100)
-                if let eventSink, percent <= 100 {
-                    eventSink(percent)
+                if let eventSink, progress.percent <= 100 {
+                    eventSink([
+                        "percent": progress.percent,
+                        "bytesProcessed": progress.bytesProcessed,
+                        "etaMs": progress.etaMs,
+                        "elapsedMs": progress.elapsedMs,
+                    ])
                 }
             },
             completion: { compressionResult in
@@ -270,7 +275,9 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
             rotationDegrees: edit?["rotationDegrees"] as? Int,
             brightness: edit?["brightness"] as? Double,
             contrast: edit?["contrast"] as? Double,
-            saturation: edit?["saturation"] as? Double)
+            saturation: edit?["saturation"] as? Double,
+            maxConcurrent: args["maxConcurrent"] as? Int,
+            debugLogging: args["debugLogging"] as? Bool ?? false)
 
         let count = paths.count
         var videos: [LightCompressor.Video] = []
@@ -313,14 +320,17 @@ public class SwiftLightCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamH
             progressHandler: { [weak self] index, progress in
                 guard let self else { return }
                 if index >= 0, index < count {
-                    percents[index] = progress.fractionCompleted * 100
+                    percents[index] = progress.percent
                 }
                 let overall = percents.reduce(0, +) / Double(count)
                 self.batchStreamHandler.eventSink?([
                     "type": "progress",
                     "index": index,
-                    "percent": progress.fractionCompleted * 100,
+                    "percent": progress.percent,
                     "overallPercent": overall,
+                    "bytesProcessed": progress.bytesProcessed,
+                    "etaMs": progress.etaMs,
+                    "elapsedMs": progress.elapsedMs,
                 ])
             },
             completion: { compressionResult in

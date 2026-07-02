@@ -159,6 +159,99 @@ void main() {
       expect(background['notificationTitle'], 'Compressing video');
     });
 
+    test('compressVideos forwards maxConcurrent when set', () async {
+      batchResponse = <Map<String, dynamic>>[
+        {'onSuccess': '/out0.mp4'},
+      ];
+
+      await compressor.compressVideos(
+        paths: ['/a.mp4'],
+        videoNames: ['out0.mp4'],
+        videoQuality: VideoQuality.medium,
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+        maxConcurrent: 3,
+      );
+
+      final arguments = log.last.arguments as Map<dynamic, dynamic>;
+      expect(arguments['maxConcurrent'], 3);
+    });
+
+    test('compressVideos sends a null maxConcurrent by default', () async {
+      batchResponse = <Map<String, dynamic>>[
+        {'onSuccess': '/out0.mp4'},
+      ];
+
+      await compressor.compressVideos(
+        paths: ['/a.mp4'],
+        videoNames: ['out0.mp4'],
+        videoQuality: VideoQuality.medium,
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+      );
+
+      final arguments = log.last.arguments as Map<dynamic, dynamic>;
+      expect(arguments.containsKey('maxConcurrent'), isTrue);
+      expect(arguments['maxConcurrent'], isNull);
+    });
+
+    test('compressVideos rejects maxConcurrent below 1', () async {
+      await expectLater(
+        compressor.compressVideos(
+          paths: ['/a.mp4'],
+          videoNames: ['out0.mp4'],
+          videoQuality: VideoQuality.medium,
+          android: AndroidConfig(),
+          ios: IOSConfig(),
+          maxConcurrent: 0,
+        ),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('compressVideo forwards debugLogging (defaults to false)', () async {
+      mockedResponse = jsonEncode({'onSuccess': '/out.mp4'});
+      await compressor.compressVideo(
+        path: '/a.mp4',
+        videoQuality: VideoQuality.medium,
+        video: Video(videoName: 'out.mp4'),
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+      );
+      final arguments = log.first.arguments as Map<dynamic, dynamic>;
+      expect(arguments['debugLogging'], false);
+    });
+
+    test('compressVideo forwards debugLogging when enabled', () async {
+      mockedResponse = jsonEncode({'onSuccess': '/out.mp4'});
+      await compressor.compressVideo(
+        path: '/a.mp4',
+        videoQuality: VideoQuality.medium,
+        video: Video(videoName: 'out.mp4'),
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+        debugLogging: true,
+      );
+      final arguments = log.first.arguments as Map<dynamic, dynamic>;
+      expect(arguments['debugLogging'], true);
+    });
+
+    test('compressVideos forwards debugLogging', () async {
+      batchResponse = <Map<String, dynamic>>[
+        {'onSuccess': '/out0.mp4'},
+      ];
+      await compressor.compressVideos(
+        paths: ['/a.mp4'],
+        videoNames: ['out0.mp4'],
+        videoQuality: VideoQuality.medium,
+        android: AndroidConfig(),
+        ios: IOSConfig(),
+        debugLogging: true,
+      );
+      final arguments = log.last.arguments as Map<dynamic, dynamic>;
+      expect(arguments['debugLogging'], true);
+    });
+
     test('compressVideo forwards videoFormat (defaults to h264)', () async {
       mockedResponse = jsonEncode({'onSuccess': '/path/to/output.mp4'});
 

@@ -20,6 +20,9 @@ class BatchProgress extends BatchEvent {
     required int index,
     required this.percent,
     required this.overallPercent,
+    this.bytesProcessed,
+    this.etaMs,
+    this.elapsedMs,
   }) : super(index);
 
   /// Compression progress of this video, from `0.0` to `100.0`.
@@ -28,9 +31,23 @@ class BatchProgress extends BatchEvent {
   /// Average progress across every video in the batch, from `0.0` to `100.0`.
   final double overallPercent;
 
+  /// Encoded output bytes written so far for this video, or `null` when the
+  /// platform did not report it.
+  final int? bytesProcessed;
+
+  /// Estimated milliseconds remaining for this video, or `null` while it is not
+  /// yet estimable. A rough projection — treat it as an indicator.
+  final int? etaMs;
+
+  /// Milliseconds elapsed since this video's encode started, or `null` when the
+  /// platform did not report it.
+  final int? elapsedMs;
+
   @override
   String toString() =>
-      'BatchProgress(index: $index, percent: $percent, overallPercent: $overallPercent)';
+      'BatchProgress(index: $index, percent: $percent, '
+      'overallPercent: $overallPercent, bytesProcessed: $bytesProcessed, '
+      'etaMs: $etaMs, elapsedMs: $elapsedMs)';
 }
 
 /// Emitted once the video at [index] has finished (successfully, with a

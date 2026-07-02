@@ -46,17 +46,39 @@ class LightCompressor {
     'compression/batch-stream',
   );
 
+  Stream<dynamic>? _progressEvents;
   Stream<double>? _onProgressUpdated;
+  Stream<CompressionProgress>? _onProgressDetail;
   Stream<BatchEvent>? _onBatchUpdate;
+
+  /// The shared raw `compression/stream` broadcast, mapped by both
+  /// [onProgressUpdated] and [onProgressDetail] (one native subscription).
+  Stream<dynamic> get _rawProgress =>
+      _progressEvents ??= _progressStream.receiveBroadcastStream();
 
   /// A broadcast stream that emits the current compression progress.
   ///
-  /// The emitted values range from `0.0` to `100.0`.
+  /// The emitted values range from `0.0` to `100.0`. For estimated time
+  /// remaining and bytes processed, use [onProgressDetail] instead.
   Stream<double> get onProgressUpdated {
-    _onProgressUpdated ??= _progressStream.receiveBroadcastStream().map<double>(
-      (dynamic result) => (result as num?)?.toDouble() ?? 0.0,
+    _onProgressUpdated ??= _rawProgress.map<double>(
+      (dynamic event) => CompressionProgress.fromEvent(event).percent,
     );
     return _onProgressUpdated!;
+  }
+
+  /// A broadcast stream of rich single-video progress samples.
+  ///
+  /// Each [CompressionProgress] carries the percentage plus, when the platform
+  /// reports them, the estimated time remaining (`etaMs`), elapsed time
+  /// (`elapsedMs`) and encoded output bytes so far (`bytesProcessed`). For just
+  /// the percentage, [onProgressUpdated] is simpler. Batch progress (including
+  /// the same fields) arrives via [onBatchUpdate].
+  Stream<CompressionProgress> get onProgressDetail {
+    _onProgressDetail ??= _rawProgress.map<CompressionProgress>(
+      CompressionProgress.fromEvent,
+    );
+    return _onProgressDetail!;
   }
 
   /// A broadcast stream of [BatchEvent]s emitted during [compressVideos].
@@ -74,10 +96,14 @@ class LightCompressor {
       );
       final int index = (map['index'] as num?)?.toInt() ?? 0;
       if (map['type'] == 'progress') {
+        final int? eta = (map['etaMs'] as num?)?.toInt();
         return BatchProgress(
           index: index,
           percent: (map['percent'] as num?)?.toDouble() ?? 0.0,
           overallPercent: (map['overallPercent'] as num?)?.toDouble() ?? 0.0,
+          bytesProcessed: (map['bytesProcessed'] as num?)?.toInt(),
+          etaMs: (eta == null || eta < 0) ? null : eta,
+          elapsedMs: (map['elapsedMs'] as num?)?.toInt(),
         );
       }
       return BatchItemCompleted(index: index, result: _resultFromMap(map));
@@ -115,6 +141,10 @@ class LightCompressor {
   /// * [edit] — Optional native edits applied during compression: trim to a
   ///   time range and/or rotate by a quarter-turn; see [VideoEdit]. Defaults to
   ///   `null` (no edits).
+  /// * [debugLogging] — When `true`, the native side emits structured debug log
+  ///   lines for this compression (the resolved encode plan and the outcome),
+  ///   with file paths reduced to their base names. Off by default. Intended for
+  ///   diagnosing a single run, not for production.
   ///
   /// Returns a [Result] which can be:
   /// * [OnSuccess] containing the output destination file path and statistics.
@@ -138,6 +168,7 @@ class LightCompressor {
     BackgroundConfig? background,
     AudioConfig? audio,
     VideoEdit? edit,
+    bool debugLogging = false,
   }) async {
     final Map<String, dynamic> response = jsonDecode(
       await _channel
@@ -164,6 +195,7 @@ class LightCompressor {
             'videoFormat': videoFormat.name,
             'background': background?.toMap(),
             'edit': edit?.toMap(),
+            'debugLogging': debugLogging,
           }),
     );
 
@@ -253,6 +285,16 @@ class LightCompressor {
   ///
   /// [edit] applies the same native trim/rotate edits to every video; see
   /// [VideoEdit].
+  ///
+  /// [maxConcurrent] caps how many videos transcode at the same time. Leaving it
+  /// `null` keeps each platform's default (Android compresses up to 2 at once;
+  /// Apple starts them all). Setting it (must be `>= 1`) is honoured on every
+  /// platform — use `1` for strictly sequential compression, or a higher value
+  /// to trade memory/heat for throughput. Has no effect on a single video.
+  ///
+  /// [debugLogging] turns on native structured debug logging for every video in
+  /// the batch (paths reduced to base names); see [compressVideo]. Off by
+  /// default.
   Future<List<Result>> compressVideos({
     required List<String> paths,
     required List<String> videoNames,
@@ -272,6 +314,8 @@ class LightCompressor {
     BackgroundConfig? background,
     AudioConfig? audio,
     VideoEdit? edit,
+    int? maxConcurrent,
+    bool debugLogging = false,
   }) async {
     assert(
       paths.length == videoNames.length,
@@ -286,6 +330,10 @@ class LightCompressor {
       'targetSizeMb must be greater than 0',
     );
     assert(videoFps == null || videoFps > 0, 'videoFps must be greater than 0');
+    assert(
+      maxConcurrent == null || maxConcurrent >= 1,
+      'maxConcurrent must be greater than or equal to 1',
+    );
     if (paths.isEmpty) {
       return <Result>[];
     }
@@ -314,6 +362,8 @@ class LightCompressor {
           'videoFormat': videoFormat.name,
           'background': background?.toMap(),
           'edit': edit?.toMap(),
+          'maxConcurrent': maxConcurrent,
+          'debugLogging': debugLogging,
         });
 
     if (response == null) {

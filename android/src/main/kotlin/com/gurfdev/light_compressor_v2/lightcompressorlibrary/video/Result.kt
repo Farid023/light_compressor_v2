@@ -21,6 +21,6 @@ data class Result(
      *  floor forced a larger output. */
     val targetSizeMet: Boolean = true,
     /** Number of encode passes actually run (1 or 2). 2 only when two-pass was
-     *  requested and the first pass overshot the target (Phase 8d). */
+     *  requested and the first pass overshot the target. */
     val passesUsed: Int = 1,
 )

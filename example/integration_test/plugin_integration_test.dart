@@ -132,6 +132,23 @@ void main() {
           await compressSample(disableAudio: true, name: 'lc_it_noaudio');
       await expectReadableVideo(compressor, ok.destinationPath);
     });
+
+    testWidgets('debugLogging does not break a compression', (
+      WidgetTester tester,
+    ) async {
+      if (source == null) return markTestSkipped(kNoClipSkipReason);
+      final Result r = await compressor.compressVideo(
+        path: source!,
+        videoQuality: VideoQuality.medium,
+        isMinBitrateCheckEnabled: false,
+        video: Video(videoName: 'lc_it_debuglog'),
+        android: AndroidConfig(isSharedStorage: false),
+        ios: IOSConfig(saveInGallery: false),
+        debugLogging: true,
+      );
+      expect(r, isA<OnSuccess>());
+      await expectReadableVideo(compressor, (r as OnSuccess).destinationPath);
+    });
   });
 
   group('progress streams', () {
@@ -145,6 +162,43 @@ void main() {
       await sub.cancel();
       expect(values, isNotEmpty);
       expect(values.every((double v) => v >= 0 && v <= 100), isTrue);
+    });
+
+    testWidgets('onProgressDetail reports rich progress samples', (
+      WidgetTester tester,
+    ) async {
+      if (source == null) return markTestSkipped(kNoClipSkipReason);
+      final List<CompressionProgress> samples = <CompressionProgress>[];
+      final sub = compressor.onProgressDetail.listen(samples.add);
+      await compressSample(name: 'lc_it_progress_detail');
+      await sub.cancel();
+
+      expect(samples, isNotEmpty);
+      expect(
+        samples.every(
+            (CompressionProgress p) => p.percent >= 0 && p.percent <= 100),
+        isTrue,
+      );
+      // The rich payload arrives (not just a bare percent): elapsed time is
+      // always reported by both natives.
+      expect(
+        samples.any((CompressionProgress p) => p.elapsedMs != null),
+        isTrue,
+        reason: 'expected elapsedMs in the rich payload',
+      );
+      // When present, the extra fields are sane (non-negative).
+      expect(
+        samples.every((CompressionProgress p) => (p.elapsedMs ?? 0) >= 0),
+        isTrue,
+      );
+      expect(
+        samples.every((CompressionProgress p) => (p.etaMs ?? 0) >= 0),
+        isTrue,
+      );
+      expect(
+        samples.every((CompressionProgress p) => (p.bytesProcessed ?? 0) >= 0),
+        isTrue,
+      );
     });
 
     testWidgets('onBatchUpdate emits progress and completion events', (
@@ -219,6 +273,38 @@ void main() {
             compressor, (results[1] as OnSuccess).destinationPath);
       },
       timeout: const Timeout(Duration(seconds: 120)),
+    );
+  });
+
+  group('batch concurrency', () {
+    // maxConcurrent caps how many videos transcode at once. Correctness —
+    // every slot reports, input order is preserved and each output is a valid
+    // video — must hold regardless of the cap. Serial (1) is the strictest
+    // case and exercises the start-one / finish / start-next pump directly.
+    testWidgets(
+      'maxConcurrent: 1 compresses a batch sequentially, order kept',
+      (WidgetTester tester) async {
+        if (source == null) return markTestSkipped(kNoClipSkipReason);
+        final List<Result> results = await compressor.compressVideos(
+          paths: <String>[source!, source!, source!],
+          videoNames: <String>['lc_it_mc0', 'lc_it_mc1', 'lc_it_mc2'],
+          videoQuality: VideoQuality.medium,
+          isMinBitrateCheckEnabled: false,
+          maxConcurrent: 1,
+          android: AndroidConfig(isSharedStorage: false),
+          ios: IOSConfig(saveInGallery: false),
+        );
+        expect(results, hasLength(3));
+        for (final Result r in results) {
+          expect(r, isA<OnSuccess>(),
+              reason: 'every capped slot should still succeed');
+        }
+        for (final Result r in results) {
+          await expectReadableVideo(
+              compressor, (r as OnSuccess).destinationPath);
+        }
+      },
+      timeout: const Timeout(Duration(seconds: 180)),
     );
   });
 

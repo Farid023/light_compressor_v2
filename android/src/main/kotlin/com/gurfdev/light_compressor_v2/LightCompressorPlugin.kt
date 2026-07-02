@@ -18,6 +18,7 @@ import android.media.MediaMetadataRetriever
 import java.io.FileOutputStream
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionErrorType
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.CompressionListener
+import com.gurfdev.light_compressor_v2.lightcompressorlibrary.ProgressInfo
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoCompressor
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoFormat
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.VideoQuality
@@ -155,26 +156,27 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         if (background != null) maybeRequestNotificationPermission()
         val videoFormat = parseVideoFormat(call)
         val edit = parseEdit(call)
+        val debugLogging: Boolean = call.argument("debugLogging") ?: false
 
         if (isSharedStorage) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 requestPermissionAndCompress33(
                     path, result, quality, isMinBitrateCheckEnabled,
                     videoBitrateInMbps, targetSizeBytes, twoPass, videoFps, audioBitrate, audioSampleRate, disableAudio, resizer,
-                    storageConfiguration, videoName, background, videoFormat, edit
+                    storageConfiguration, videoName, background, videoFormat, edit, debugLogging
                 )
             } else {
                 requestPermissionAndCompressLegacy(
                     path, result, quality, isMinBitrateCheckEnabled,
                     videoBitrateInMbps, targetSizeBytes, twoPass, videoFps, audioBitrate, audioSampleRate, disableAudio, resizer,
-                    storageConfiguration, videoName, background, videoFormat, edit
+                    storageConfiguration, videoName, background, videoFormat, edit, debugLogging
                 )
             }
         } else {
             compressVideo(
                 path, result, quality, isMinBitrateCheckEnabled,
                 videoBitrateInMbps, targetSizeBytes, twoPass, videoFps, audioBitrate, audioSampleRate, disableAudio, resizer,
-                storageConfiguration, videoName, background, videoFormat, edit
+                storageConfiguration, videoName, background, videoFormat, edit, debugLogging
             )
         }
     }
@@ -199,6 +201,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         background: BackgroundParams?,
         videoFormat: VideoFormat,
         edit: EditParams?,
+        debugLogging: Boolean,
     ) {
         val sourcePath = path
         // A MethodChannel reply may be submitted only once. A cancelled run can
@@ -240,16 +243,22 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                 brightness = edit?.brightness,
                 contrast = edit?.contrast,
                 saturation = edit?.saturation,
+                debugLogging = debugLogging,
             ),
             listener = object : CompressionListener {
                 override fun onStart(index: Int) {}
 
-                override fun onProgress(index: Int, percent: Float) {
+                override fun onProgress(index: Int, progress: ProgressInfo) {
                     Handler(Looper.getMainLooper()).post {
-                        eventSink?.success(percent)
+                        eventSink?.success(mapOf(
+                            "percent" to progress.percent.toDouble(),
+                            "bytesProcessed" to progress.bytesProcessed,
+                            "etaMs" to progress.etaMs,
+                            "elapsedMs" to progress.elapsedMs,
+                        ))
                         if (background != null) {
                             CompressionForegroundService.updateProgress(
-                                applicationContext, percent.toInt(), videoName,
+                                applicationContext, progress.percent.toInt(), videoName,
                             )
                         }
                     }
@@ -398,19 +407,24 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
                 brightness = edit?.brightness,
                 contrast = edit?.contrast,
                 saturation = edit?.saturation,
+                maxConcurrent = call.argument("maxConcurrent"),
+                debugLogging = call.argument("debugLogging") ?: false,
             ),
             listener = object : CompressionListener {
                 override fun onStart(index: Int) {}
 
-                override fun onProgress(index: Int, percent: Float) {
+                override fun onProgress(index: Int, progress: ProgressInfo) {
                     mainHandler.post {
-                        if (index in 0 until count) percents[index] = percent
+                        if (index in 0 until count) percents[index] = progress.percent
                         val overall = if (count > 0) percents.sum() / count else 0f
                         batchEventSink?.success(mapOf(
                             "type" to "progress",
                             "index" to index,
-                            "percent" to percent.toDouble(),
-                            "overallPercent" to overall.toDouble()
+                            "percent" to progress.percent.toDouble(),
+                            "overallPercent" to overall.toDouble(),
+                            "bytesProcessed" to progress.bytesProcessed,
+                            "etaMs" to progress.etaMs,
+                            "elapsedMs" to progress.elapsedMs,
                         ))
                         if (background != null) {
                             // Videos compress in parallel, so there is no single
@@ -464,7 +478,8 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         audioBitrate: Int?, audioSampleRate: Int?,
         disableAudio: Boolean, resizer: VideoResizer?,
         storageConfiguration: StorageConfiguration, videoName: String,
-        background: BackgroundParams?, videoFormat: VideoFormat, edit: EditParams?
+        background: BackgroundParams?, videoFormat: VideoFormat, edit: EditParams?,
+        debugLogging: Boolean
     ) {
         if (ContextCompat.checkSelfPermission(
                 activity, Manifest.permission.READ_MEDIA_VIDEO
@@ -483,7 +498,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         }
         compressVideo(
             path, result, quality, isMinBitrateCheckEnabled,
-            videoBitrateInMbps, targetSizeBytes, twoPass, videoFps, audioBitrate, audioSampleRate, disableAudio, resizer, storageConfiguration, videoName, background, videoFormat, edit
+            videoBitrateInMbps, targetSizeBytes, twoPass, videoFps, audioBitrate, audioSampleRate, disableAudio, resizer, storageConfiguration, videoName, background, videoFormat, edit, debugLogging
         )
     }
 
@@ -494,7 +509,8 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         audioBitrate: Int?, audioSampleRate: Int?,
         disableAudio: Boolean, resizer: VideoResizer?,
         storageConfiguration: StorageConfiguration, videoName: String,
-        background: BackgroundParams?, videoFormat: VideoFormat, edit: EditParams?
+        background: BackgroundParams?, videoFormat: VideoFormat, edit: EditParams?,
+        debugLogging: Boolean
     ) {
         val permissions = arrayOf(
             Manifest.permission.READ_EXTERNAL_STORAGE,
@@ -505,7 +521,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         }
         compressVideo(
             path, result, quality, isMinBitrateCheckEnabled,
-            videoBitrateInMbps, targetSizeBytes, twoPass, videoFps, audioBitrate, audioSampleRate, disableAudio, resizer, storageConfiguration, videoName, background, videoFormat, edit
+            videoBitrateInMbps, targetSizeBytes, twoPass, videoFps, audioBitrate, audioSampleRate, disableAudio, resizer, storageConfiguration, videoName, background, videoFormat, edit, debugLogging
         )
     }
 
@@ -533,7 +549,7 @@ class LightCompressorPlugin : FlutterPlugin, MethodCallHandler,
         )
     }
 
-    /** Optional native edits (Phase 9): a trim range + a quarter-turn rotation. */
+    /** Optional native edits: a trim range + a quarter-turn rotation. */
     private data class EditParams(
         val trimStartMs: Long?,
         val trimEndMs: Long?,

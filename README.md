@@ -70,7 +70,7 @@ Add the dependency to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  light_compressor_v2: ^1.3.0
+  light_compressor_v2: ^1.8.0
 ```
 
 Then run:
@@ -145,6 +145,21 @@ final List<Result> results = await compressor.compressVideos(
 for (final (int i, Result r) in results.indexed) {
   if (r is OnSuccess) print('Video $i → ${r.destinationPath}');
 }
+```
+
+By default Android compresses up to two videos at once and Apple starts them
+all. Pass `maxConcurrent` to cap that — e.g. `maxConcurrent: 1` for strictly
+sequential compression, which lowers peak memory and device heat:
+
+```dart
+await compressor.compressVideos(
+  paths: paths,
+  videoNames: names,
+  videoQuality: VideoQuality.medium,
+  maxConcurrent: 1, // one video at a time
+  android: AndroidConfig(saveAt: SaveAt.Movies),
+  ios: IOSConfig(saveInGallery: false),
+);
 ```
 
 ### Run in the background
@@ -288,7 +303,22 @@ StreamBuilder<double>(
 );
 ```
 
-Batch — per-video and overall progress, plus a completion event per item:
+For estimated time remaining and the output size as it grows, listen to
+`onProgressDetail` instead (a `Stream<CompressionProgress>`):
+
+```dart
+compressor.onProgressDetail.listen((CompressionProgress p) {
+  final eta = p.etaMs != null ? '~${(p.etaMs! / 1000).ceil()}s left' : '—';
+  print('${p.percent.toStringAsFixed(0)}%  $eta  ${p.bytesProcessed ?? 0} bytes');
+});
+```
+
+`etaMs` is a rough projection (an indicator, not a guarantee) and is `null`
+until it becomes estimable; `bytesProcessed` is the encoded output written so
+far. `onProgressUpdated` stays available for just the percentage.
+
+Batch — per-video and overall progress, plus a completion event per item.
+`BatchProgress` carries the same `etaMs` / `elapsedMs` / `bytesProcessed` fields:
 
 ```dart
 compressor.onBatchUpdate.listen((BatchEvent event) {
@@ -396,6 +426,23 @@ try {
 
 ---
 
+## Large files & memory
+
+A few things to know when compressing very large or very long sources:
+
+- **Audio re-encode buffers in memory.** Passing an `AudioConfig` (AAC re-encode)
+  makes Android hold the encoded audio track in memory until muxing, so memory
+  grows with audio **duration** (roughly tens of MB per hour). It's fine for
+  typical clips; for multi-hour sources, omit `AudioConfig` so the source audio
+  is copied through with no buffering.
+- **~4 GB MP4 output ceiling (Android).** `MediaMuxer`'s MP4 writer uses 32-bit
+  box offsets, so an output approaching 4 GB may fail or truncate. For very
+  large/long sources, pass `targetSizeMb` to keep the output well under that.
+- **iOS/macOS** stream through `AVAssetReader`/`AVAssetWriter`, so they don't
+  buffer the whole track; the 4 GB note is Android-specific.
+
+---
+
 ## 📖 API Reference
 
 ### `compressVideo()` → `Future<Result>`
@@ -413,6 +460,7 @@ try {
 | `background` | `BackgroundConfig?` | | `null` | Keep running while the app is backgrounded. See [`BackgroundConfig`](#backgroundconfig). |
 | `audio` | `AudioConfig?` | | `null` | Re-encode the audio track as AAC. See [`AudioConfig`](#audioconfig). |
 | `edit` | `VideoEdit?` | | `null` | Trim and/or rotate while compressing. See [`VideoEdit`](#videoedit). |
+| `debugLogging` | `bool` | | `false` | Emit native structured debug logs for this run (paths reduced to base names). |
 
 ### `compressVideos()` → `Future<List<Result>>`
 
@@ -434,6 +482,8 @@ try {
 | `background` | `BackgroundConfig?` | | `null` | Keep the whole batch running while backgrounded. See [`BackgroundConfig`](#backgroundconfig). |
 | `audio` | `AudioConfig?` | | `null` | Re-encode the audio track as AAC. See [`AudioConfig`](#audioconfig). |
 | `edit` | `VideoEdit?` | | `null` | Trim and/or rotate every video. See [`VideoEdit`](#videoedit). |
+| `maxConcurrent` | `int?` | | `null` | Cap how many videos transcode at once (`>= 1`). Unset keeps the platform default (Android 2; Apple starts all). No effect on a single video. |
+| `debugLogging` | `bool` | | `false` | Emit native structured debug logs for every video in the batch (paths reduced to base names). |
 
 ### `getCompressionEstimate()` → `Future<CompressionEstimate>`
 

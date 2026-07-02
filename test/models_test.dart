@@ -479,4 +479,52 @@ void main() {
       expect(const VideoEdit(brightness: -3.0).toMap()['brightness'], -1.0);
     });
   });
+
+  group('CompressionProgress', () {
+    test('fromEvent parses a full progress map', () {
+      final progress = CompressionProgress.fromEvent(<String, dynamic>{
+        'percent': 42.5,
+        'bytesProcessed': 1024,
+        'etaMs': 3000,
+        'elapsedMs': 1500,
+      });
+      expect(progress.percent, 42.5);
+      expect(progress.bytesProcessed, 1024);
+      expect(progress.etaMs, 3000);
+      expect(progress.elapsedMs, 1500);
+    });
+
+    test('fromEvent accepts a bare numeric percent (legacy wire)', () {
+      final progress = CompressionProgress.fromEvent(73);
+      expect(progress.percent, 73.0);
+      expect(progress.bytesProcessed, isNull);
+      expect(progress.etaMs, isNull);
+      expect(progress.elapsedMs, isNull);
+    });
+
+    test('fromEvent maps a negative etaMs to null (not yet estimable)', () {
+      final progress = CompressionProgress.fromEvent(<String, dynamic>{
+        'percent': 1.0,
+        'etaMs': -1,
+      });
+      expect(progress.etaMs, isNull);
+    });
+
+    test('fromEvent coerces int/double channel numbers', () {
+      final progress = CompressionProgress.fromEvent(<String, dynamic>{
+        'percent': 10, // int on the wire
+        'bytesProcessed': 2048.0, // double on the wire
+        'etaMs': 500.0,
+        'elapsedMs': 250,
+      });
+      expect(progress.percent, 10.0);
+      expect(progress.bytesProcessed, 2048);
+      expect(progress.etaMs, 500);
+      expect(progress.elapsedMs, 250);
+    });
+
+    test('fromEvent defaults percent to 0 for a null event', () {
+      expect(CompressionProgress.fromEvent(null).percent, 0.0);
+    });
+  });
 }

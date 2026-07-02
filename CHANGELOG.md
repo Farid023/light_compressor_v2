@@ -1,5 +1,51 @@
 # Changelog
 
+# 1.8.0
+
+### New
+
+- **Opt-in debug logging** — pass `debugLogging: true` to `compressVideo` /
+  `compressVideos` to have the native side emit a couple of structured log lines
+  per video (the resolved encode plan and the outcome). File paths are reduced to
+  their base names. Off by default; intended for diagnosing a single run.
+- **Progress detail (ETA + bytes)** — a new **`onProgressDetail`**
+  (`Stream<CompressionProgress>`) reports, alongside the percentage, the
+  estimated time remaining (`etaMs`), elapsed time (`elapsedMs`) and encoded
+  output bytes written so far (`bytesProcessed`) for the single-video flow. The
+  same fields are now also on **`BatchProgress`** (via `onBatchUpdate`). The
+  existing **`onProgressUpdated`** (`Stream<double>`) is unchanged — it stays the
+  simplest option for just the percentage. `etaMs` is a rough projection (an
+  indicator, not a guarantee) and is `null` until it becomes estimable.
+- **Configurable batch concurrency** — pass `maxConcurrent` to `compressVideos`
+  to cap how many videos transcode at the same time. Leaving it unset keeps each
+  platform's historic default (Android compresses up to 2 at once; Apple starts
+  them all); setting it (`>= 1`) compresses strictly one-at-a-time (`1`) or trades
+  memory and device heat for throughput at higher values. Honoured on Android,
+  iOS and macOS; has no effect on a single `compressVideo`.
+- Example app gains a **"Max concurrent"** (Auto / 1 / 2 / 3) selector in the
+  batch flow.
+
+### Fixed
+
+- **iOS/macOS:** `getMediaInfo` now reports the correct `fileSize` for sources
+  larger than ~2 GB (it read the size as a 32-bit value, which wrapped). Affects
+  metadata only; compression was unaffected.
+
+### Known limitations (large files)
+
+- **Audio re-encode buffers in memory.** When an `AudioConfig` is supplied (AAC
+  re-encode), Android holds the encoded audio track in memory until muxing, so
+  memory use grows with **audio duration** (roughly tens of MB per hour). Fine
+  for typical clips; for multi-hour sources, omit `AudioConfig` to copy the audio
+  through (no buffering) or expect higher memory use. A streaming rewrite is
+  planned.
+- **~4 GB MP4 output ceiling (Android).** `MediaMuxer`'s MP4 writer uses 32-bit
+  box offsets, so outputs approaching 4 GB may fail or truncate. Target a smaller
+  size (`targetSizeMb`) for very large/long sources.
+
+All additions are additive and fully backward compatible — existing APIs are
+unchanged.
+
 # 1.7.0
 
 ### New

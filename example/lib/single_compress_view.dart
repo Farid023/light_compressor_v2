@@ -481,10 +481,11 @@ class _SingleCompressViewState extends State<SingleCompressView>
     }
   }
 
-  Widget _buildProgress() => StreamBuilder<double>(
-        stream: widget.compressor.onProgressUpdated,
+  Widget _buildProgress() => StreamBuilder<CompressionProgress>(
+        stream: widget.compressor.onProgressDetail,
         builder: (context, snapshot) {
-          final progress = snapshot.data ?? 0;
+          final CompressionProgress? detail = snapshot.data;
+          final double progress = detail?.percent ?? 0;
           return Center(
             child: Column(
               children: [
@@ -514,15 +515,29 @@ class _SingleCompressViewState extends State<SingleCompressView>
                   ),
                 ),
                 const SizedBox(height: 16),
-                const Text(
-                  'Compressing…',
-                  style: TextStyle(fontSize: 14, color: Colors.black54),
+                Text(
+                  _progressLabel(detail),
+                  style: const TextStyle(fontSize: 14, color: Colors.black54),
                 ),
               ],
             ),
           );
         },
       );
+
+  /// Builds the under-the-dial label: estimated time remaining and live output
+  /// size when the platform reports them, otherwise a plain "Compressing…".
+  String _progressLabel(CompressionProgress? detail) {
+    if (detail == null) return 'Compressing…';
+    final List<String> parts = <String>[];
+    if (detail.etaMs != null) {
+      parts.add('~${(detail.etaMs! / 1000).ceil()}s left');
+    }
+    if ((detail.bytesProcessed ?? 0) > 0) {
+      parts.add(formatBytes(detail.bytesProcessed!, 1));
+    }
+    return parts.isEmpty ? 'Compressing…' : parts.join(' • ');
+  }
 }
 
 /// Shows the picked video's thumbnail and metadata.
