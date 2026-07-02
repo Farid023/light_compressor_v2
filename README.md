@@ -7,7 +7,7 @@
 [![Pub Likes](https://img.shields.io/pub/likes/light_compressor_v2)](https://pub.dev/packages/light_compressor_v2)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A powerful, easy-to-use video compression plugin for Flutter — for **single videos** and **batches**.
+Native light video compression for Flutter (No FFmpeg) — **single** or **batch**, H.264/H.265, target size, trim, rotate and colour, with live progress and cancellation.
 
 It generates a compressed MP4 with reduced width, height, and bitrate while keeping good visual quality, and also exposes media metadata, thumbnail extraction, and cache cleanup.
 
@@ -74,7 +74,7 @@ Add the dependency to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  light_compressor_v2: ^1.8.0
+  light_compressor_v2: ^1.8.1
 ```
 
 Then run:
