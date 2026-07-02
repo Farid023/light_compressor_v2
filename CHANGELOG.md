@@ -1,5 +1,11 @@
 # Changelog
 
+# 1.8.2
+
+### Changed
+
+- **Wider compatibility:** lowered the minimum toolchain to **Flutter 3.24 / Dart 3.5** (from 3.41 / 3.11) — no code changes; the floor now matches the SwiftPM baseline and Android `compileSdk 34` (AGP 8.1.1+).
+
 # 1.8.1
 
 ### Changed

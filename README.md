@@ -74,7 +74,7 @@ Add the dependency to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  light_compressor_v2: ^1.8.1
+  light_compressor_v2: ^1.8.2
 ```
 
 Then run:
