@@ -254,14 +254,16 @@ a vendored fork of the LightCompressor library:
   `setOrientationHint` applied *after* the source-rotation normalization — and
   colour, baked by the `TextureRenderer` fragment shader (identity uniforms when
   no colour, so it stays free).
-  **Large-file limits (review):** `transcodeAudioToBuffer` holds the
-  whole encoded audio track in memory, so the AAC re-encode path's memory scales
-  with audio *duration* (the no-`AudioConfig` passthrough copy doesn't buffer) —
-  a streaming rewrite is a known follow-up. And `MediaMuxer`'s MP4 writer uses
-  32-bit box offsets, so outputs near **4 GB** can fail/truncate. Both are
-  documented in the README's "Large files & memory". (The size/bitrate/PTS math
-  is `Long`/`Double`; only Apple's `getMediaInfo` had a 32-bit `fileSize`
-  truncation, fixed in 11d via `int64Value`.)
+  **Large-file note:** `transcodeAudioToBuffer` spills the re-encoded AAC to a
+  temp file (in the cache dir, deleted when compression finishes; re-read for
+  each two-pass run) and `writeBufferedAudio` streams it into the muxer, so the
+  AAC re-encode path's memory stays flat regardless of audio *duration* — it
+  can't write straight to the muxer because `MediaMuxer` needs the audio format
+  before `start()`. The remaining large-file limit: `MediaMuxer`'s MP4 writer
+  uses 32-bit box offsets, so outputs near **4 GB** can fail/truncate (documented
+  in the README's "Large files & memory"). (The size/bitrate/PTS math is
+  `Long`/`Double`; only Apple's `getMediaInfo` had a 32-bit `fileSize`
+  truncation, since fixed via `int64Value`.)
 - [`config/Configuration.kt`](android/src/main/kotlin/com/gurfdev/light_compressor_v2/lightcompressorlibrary/config/Configuration.kt)
   — the `Configuration` settings data class **and** the `StorageConfiguration`
   strategies that decide where output lands: `SharedStorageConfiguration`
@@ -294,7 +296,19 @@ both declared in
 foreground-service / notification permissions.
 
 **Build** — Kotlin DSL ([`build.gradle.kts`](android/build.gradle.kts)), **minSdk 24**.
-Built through the example app, not standalone.
+Built through the example app, not standalone. The floor stays 24 **by toolchain**:
+recent Flutter's Gradle dependency checker *errors* an app `minSdk < 23` and
+*warns* `< 24`, with no opt-out — so lowering the plugin below 24 cannot help any
+consumer on a current Flutter. The `Build.VERSION.SDK_INT` runtime gates all have
+correct ≤22 fallbacks (so the engine *runs* on 21+), but it is **not lint-clean
+below 29**: `lint` at minSdk 21 reports harmless `InlinedApi` constants
+(`KEY_LEVEL`, `KEY_COLOR_*`, MediaStore `RELATIVE_PATH` / `IS_PENDING` /
+`VOLUME_EXTERNAL_PRIMARY`) **and** one real `NewApi` error —
+`MediaStore.Downloads.EXTERNAL_CONTENT_URI` (API 29) in
+`FileUtils.saveVideoInExternal`, runtime-safe only because its caller gates
+`SDK_INT >= Q` (a guard lint can't see). Do not lower the floor without
+re-checking the Flutter threshold **and** running the plugin's `lint` (it would
+first need `@RequiresApi` annotations on the MediaStore writer).
 
 ---
 
@@ -431,7 +445,10 @@ build step.
 
 - **Native codecs only** — never ffmpeg/ffprobe, anywhere, ever (see top).
 - **Apple sync rule** — engine + `Encodable.swift` are copy-identical iOS↔macOS;
-  plugin files are per-platform (see the Apple section).
+  plugin files are per-platform (see the Apple section). Enforced by
+  [`test/apple_engine_sync_test.dart`](test/apple_engine_sync_test.dart) (runs
+  under `flutter test`, so CI fails on drift) — after editing the iOS engine,
+  copy it to macOS or this test goes red.
 - **Strict lint.** [`analysis_options.yaml`](analysis_options.yaml) enables a
   large explicit rule set (e.g. `always_specify_types`, `prefer_single_quotes`,
   `sort_constructors_first`, `directives_ordering`) — *not* stock `flutter_lints`.

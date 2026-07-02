@@ -2,6 +2,7 @@
 
 [![Pub Version](https://img.shields.io/pub/v/light_compressor_v2.svg)](https://pub.dev/packages/light_compressor_v2)
 [![CI](https://github.com/Farid023/light_compressor_v2/actions/workflows/ci.yml/badge.svg)](https://github.com/Farid023/light_compressor_v2/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/github/Farid023/light_compressor_v2/graph/badge.svg?token=60J1EEWA84)](https://codecov.io/github/Farid023/light_compressor_v2)
 [![Pub Platforms](https://img.shields.io/badge/platform-iOS%20%7C%20Android%20%7C%20macOS-blue)](https://pub.dev/packages/light_compressor_v2)
 [![Pub Likes](https://img.shields.io/pub/likes/light_compressor_v2)](https://pub.dev/packages/light_compressor_v2)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -62,6 +63,9 @@ Extreme high bitrates are reduced while maintaining good video quality, resultin
 
 **Minimum versions:** iOS 11 · Android API 24 · macOS 10.15
 
+Windows and Linux are **not planned** (each needs a large native effort — Media
+Foundation / GStreamer). Web is **not currently supported**.
+
 ---
 
 ## 📦 Installation
@@ -85,7 +89,7 @@ No extra Podfile configuration is required. The plugin ships with both a `.podsp
 
 ### Android — minSdk
 
-The plugin requires **minSdk 24**. If your app targets a lower SDK, update your `android/app/build.gradle`:
+The plugin requires **minSdk 24**. If your app targets a lower SDK, raise it in `android/app/build.gradle`:
 
 ```groovy
 android {
@@ -94,6 +98,13 @@ android {
     }
 }
 ```
+
+> **Why 24 and not lower?** The native engine itself runs on API 21+, but the
+> Flutter Gradle toolchain sets the practical floor: recent Flutter **fails the
+> build** for an app `minSdk` below 23 and **warns** below 24, with no opt-out.
+> So 24 is the lowest clean target. To reach Android 6.0 you may set `minSdk 23`
+> (your build then shows Flutter's "below 24" warning); 21/22 are not buildable
+> on a current Flutter toolchain.
 
 ---
 
@@ -430,11 +441,11 @@ try {
 
 A few things to know when compressing very large or very long sources:
 
-- **Audio re-encode buffers in memory.** Passing an `AudioConfig` (AAC re-encode)
-  makes Android hold the encoded audio track in memory until muxing, so memory
-  grows with audio **duration** (roughly tens of MB per hour). It's fine for
-  typical clips; for multi-hour sources, omit `AudioConfig` so the source audio
-  is copied through with no buffering.
+- **Audio re-encode spills to disk, not RAM (Android).** Passing an `AudioConfig`
+  (AAC re-encode) makes Android buffer the encoded audio to a temp file and then
+  stream it into the muxer — needed because `MediaMuxer` wants the audio format
+  before it starts — so memory stays flat regardless of audio **duration**. The
+  passthrough copy (no `AudioConfig`) doesn't buffer at all.
 - **~4 GB MP4 output ceiling (Android).** `MediaMuxer`'s MP4 writer uses 32-bit
   box offsets, so an output approaching 4 GB may fail or truncate. For very
   large/long sources, pass `targetSizeMb` to keep the output well under that.

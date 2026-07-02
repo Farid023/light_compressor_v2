@@ -841,6 +841,95 @@ void main() {
       },
     );
 
+    test('onBatchUpdate decodes a progress event into BatchProgress', () async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const EventChannel batchChannel = EventChannel(
+        'compression/batch-stream',
+      );
+      messenger.setMockStreamHandler(
+        batchChannel,
+        MockStreamHandler.inline(
+          onListen: (Object? args, MockStreamHandlerEventSink sink) {
+            sink.success(<String, dynamic>{
+              'type': 'progress',
+              'index': 1,
+              'percent': 40, // int from native → coerced to double
+              'overallPercent': 20.0,
+              'bytesProcessed': 4096,
+              'etaMs': 5000,
+              'elapsedMs': 2000,
+            });
+            sink.success(<String, dynamic>{
+              'type': 'progress',
+              'index': 1,
+              'percent': 60.0,
+              'overallPercent': 30.0,
+              'etaMs': -1, // not yet estimable → null
+            });
+            sink.endOfStream();
+          },
+        ),
+      );
+      addTearDown(() => messenger.setMockStreamHandler(batchChannel, null));
+
+      final List<BatchEvent> events = await compressor.onBatchUpdate
+          .take(2)
+          .toList();
+
+      final BatchProgress first = events[0] as BatchProgress;
+      expect(first.index, 1);
+      expect(first.percent, 40.0);
+      expect(first.overallPercent, 20.0);
+      expect(first.bytesProcessed, 4096);
+      expect(first.etaMs, 5000);
+      expect(first.elapsedMs, 2000);
+
+      final BatchProgress second = events[1] as BatchProgress;
+      expect(second.etaMs, isNull); // -1 coerced to null
+      expect(second.bytesProcessed, isNull); // absent → null
+    });
+
+    test(
+      'onBatchUpdate decodes a result event into BatchItemCompleted',
+      () async {
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        const EventChannel batchChannel = EventChannel(
+          'compression/batch-stream',
+        );
+        messenger.setMockStreamHandler(
+          batchChannel,
+          MockStreamHandler.inline(
+            onListen: (Object? args, MockStreamHandlerEventSink sink) {
+              sink.success(<String, dynamic>{
+                'type': 'result',
+                'index': 0,
+                'onSuccess': '/out.mp4',
+                'originalSize': 2000,
+                'compressedSize': 800,
+                'duration': 3000,
+                'usedFormat': 'h265',
+              });
+              sink.endOfStream();
+            },
+          ),
+        );
+        addTearDown(() => messenger.setMockStreamHandler(batchChannel, null));
+
+        final List<BatchEvent> events = await compressor.onBatchUpdate
+            .take(1)
+            .toList();
+
+        final BatchItemCompleted completed = events[0] as BatchItemCompleted;
+        expect(completed.index, 0);
+        expect(completed.result, isA<OnSuccess>());
+        final OnSuccess ok = completed.result as OnSuccess;
+        expect(ok.destinationPath, '/out.mp4');
+        expect(ok.usedFormat, VideoFormat.h265);
+      },
+    );
+
     // --- Phase 7: pre-flight & introspection ---
 
     test(

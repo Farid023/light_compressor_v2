@@ -30,15 +30,12 @@
 - **iOS/macOS:** `getMediaInfo` now reports the correct `fileSize` for sources
   larger than ~2 GB (it read the size as a 32-bit value, which wrapped). Affects
   metadata only; compression was unaffected.
+- **Android:** the AAC audio re-encode (`AudioConfig`) no longer holds the whole
+  encoded audio track in RAM — it spills to a temp file and streams into the
+  muxer, so memory stays flat regardless of audio duration. Output is unchanged.
 
 ### Known limitations (large files)
 
-- **Audio re-encode buffers in memory.** When an `AudioConfig` is supplied (AAC
-  re-encode), Android holds the encoded audio track in memory until muxing, so
-  memory use grows with **audio duration** (roughly tens of MB per hour). Fine
-  for typical clips; for multi-hour sources, omit `AudioConfig` to copy the audio
-  through (no buffering) or expect higher memory use. A streaming rewrite is
-  planned.
 - **~4 GB MP4 output ceiling (Android).** `MediaMuxer`'s MP4 writer uses 32-bit
   box offsets, so outputs approaching 4 GB may fail or truncate. Target a smaller
   size (`targetSizeMb`) for very large/long sources.

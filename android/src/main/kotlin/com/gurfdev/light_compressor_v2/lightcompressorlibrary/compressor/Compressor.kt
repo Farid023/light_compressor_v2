@@ -21,8 +21,14 @@ import com.gurfdev.light_compressor_v2.lightcompressorlibrary.utils.roundDimensi
 import com.gurfdev.light_compressor_v2.lightcompressorlibrary.video.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.io.EOFException
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.nio.ByteBuffer
 
 object Compressor {
@@ -129,6 +135,9 @@ object Compressor {
         // IMPORTANT: keep fisExtractor open for the whole compression; the
         // extractor reads samples from this fd until start() releases it.
 
+        // Hoisted out of the try so the finally can delete the re-encoded-audio
+        // spill file on every exit path (success, failure, cancel, exception).
+        var audioSpillFile: File? = null
         try {
 
         val height: Double = prepareVideoHeight(mediaMetadataRetriever)
@@ -329,6 +338,7 @@ object Compressor {
                     trimStartUs, loopTrimEndUs,
                 )
             else null
+        audioSpillFile = audioTranscode?.bufferFile
 
         // Two-pass. Enabled only when requested AND a target size was
         // set AND it is reachable (a floor-bound pass 1 can't be improved by a
@@ -443,6 +453,8 @@ object Compressor {
             try { mediaMetadataRetriever.release() } catch (ignored: Exception) {}
             try { fisRetriever?.close() } catch (ignored: Exception) {}
             try { fisExtractor?.close() } catch (ignored: Exception) {}
+            // Delete the re-encoded-audio spill file (shared across two passes).
+            try { audioSpillFile?.delete() } catch (ignored: Exception) {}
         }
     }
 
@@ -846,11 +858,11 @@ object Compressor {
 
                 if (muxerStarted && audioMuxerTrackIndex >= 0) {
                     if (audioTranscode != null) {
-                        // Write the pre-encoded AAC samples.
+                        // Stream the pre-encoded AAC samples from the spill file.
                         writeBufferedAudio(
                             mediaMuxer,
                             audioMuxerTrackIndex,
-                            audioTranscode.samples,
+                            audioTranscode.bufferFile,
                             bufferInfo,
                         )
                     } else if (audioFormat != null) {
@@ -917,17 +929,16 @@ object Compressor {
         )
     }
 
-    /** One re-encoded AAC access unit, buffered until the muxer is started. */
-    private class EncodedAudioSample(
-        val data: ByteArray,
-        val presentationTimeUs: Long,
-        val flags: Int,
-    )
-
-    /** The captured AAC output format plus all re-encoded samples. */
+    /**
+     * The captured AAC output format plus a temp file holding every re-encoded
+     * access unit as length-prefixed records (pts: Long, flags: Int, size: Int,
+     * then the bytes). Samples are spilled to disk instead of held in RAM, so
+     * memory stays flat regardless of audio duration; [bufferFile] is deleted
+     * once compression finishes (compressVideo's finally).
+     */
     private class AudioTranscodeResult(
         val format: MediaFormat,
-        val samples: List<EncodedAudioSample>,
+        val bufferFile: File,
     )
 
     /**
@@ -939,8 +950,9 @@ object Compressor {
      * null when there is no audio track or transcoding fails (the caller then
      * falls back to the verbatim passthrough copy).
      *
-     * The encoded audio is held in memory; this is fine for typical clips but a
-     * very long source means proportionally more memory (a streaming rewrite is planned).
+     * The encoded audio is written to a temp file rather than held in RAM, so
+     * memory stays flat regardless of audio duration (MediaMuxer needs the audio
+     * track format before start(), so the samples can't go straight to the muxer).
      */
     private fun transcodeAudioToBuffer(
         context: Context,
@@ -954,6 +966,9 @@ object Compressor {
         var fis: FileInputStream? = null
         var decoder: MediaCodec? = null
         var encoder: MediaCodec? = null
+        var bufferFile: File? = null
+        var bufferOut: DataOutputStream? = null
+        var success = false
         try {
             try {
                 fis = FileInputStream(file)
@@ -994,7 +1009,8 @@ object Compressor {
             encoder.configure(outFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             encoder.start()
 
-            val samples = ArrayList<EncodedAudioSample>()
+            bufferFile = File.createTempFile("lc_audio_", ".tmp", context.cacheDir)
+            bufferOut = DataOutputStream(BufferedOutputStream(FileOutputStream(bufferFile)))
             var encoderFormat: MediaFormat? = null
             val info = MediaCodec.BufferInfo()
             val timeoutUs = 10000L
@@ -1088,9 +1104,13 @@ object Compressor {
                         out.limit(info.offset + info.size)
                         val data = ByteArray(info.size)
                         out.get(data)
-                        samples.add(
-                            EncodedAudioSample(data, info.presentationTimeUs, info.flags),
-                        )
+                        // Spill each access unit to disk (length-prefixed)
+                        // instead of accumulating in RAM, so the buffer no longer
+                        // scales with audio duration.
+                        bufferOut!!.writeLong(info.presentationTimeUs)
+                        bufferOut!!.writeInt(info.flags)
+                        bufferOut!!.writeInt(data.size)
+                        bufferOut!!.write(data)
                     }
                     encoder.releaseOutputBuffer(encOut, false)
                     if ((info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
@@ -1099,7 +1119,11 @@ object Compressor {
                 }
             }
 
-            return encoderFormat?.let { AudioTranscodeResult(it, samples) }
+            try { bufferOut?.flush() } catch (ignored: Exception) {}
+            val transcodeResult =
+                encoderFormat?.let { AudioTranscodeResult(it, bufferFile!!) }
+            success = transcodeResult != null
+            return transcodeResult
         } catch (e: Exception) {
             printException(e)
             return null
@@ -1110,24 +1134,39 @@ object Compressor {
             try { encoder?.release() } catch (ignored: Exception) {}
             try { extractor.release() } catch (ignored: Exception) {}
             try { fis?.close() } catch (ignored: Exception) {}
+            try { bufferOut?.close() } catch (ignored: Exception) {}
+            // Drop the spill file unless it was handed off in the result.
+            if (!success) try { bufferFile?.delete() } catch (ignored: Exception) {}
         }
     }
 
-    /** Writes the [samples] re-encoded by [transcodeAudioToBuffer] into the
-     *  already-added muxer audio [trackIndex]. */
+    /** Streams the AAC access units that [transcodeAudioToBuffer] spilled to
+     *  [bufferFile] into the already-added muxer audio [trackIndex], one record
+     *  at a time (so memory stays flat regardless of audio length). */
     private fun writeBufferedAudio(
         mediaMuxer: MediaMuxer,
         trackIndex: Int,
-        samples: List<EncodedAudioSample>,
+        bufferFile: File,
         bufferInfo: MediaCodec.BufferInfo,
     ) {
-        for (sample in samples) {
-            val buffer = ByteBuffer.wrap(sample.data)
-            bufferInfo.offset = 0
-            bufferInfo.size = sample.data.size
-            bufferInfo.presentationTimeUs = sample.presentationTimeUs
-            bufferInfo.flags = sample.flags
-            mediaMuxer.writeSampleData(trackIndex, buffer, bufferInfo)
+        DataInputStream(BufferedInputStream(FileInputStream(bufferFile))).use { input ->
+            while (true) {
+                val presentationTimeUs: Long
+                try {
+                    presentationTimeUs = input.readLong()
+                } catch (e: EOFException) {
+                    break // clean end of the spill file
+                }
+                val flags = input.readInt()
+                val size = input.readInt()
+                val data = ByteArray(size)
+                input.readFully(data)
+                bufferInfo.offset = 0
+                bufferInfo.size = size
+                bufferInfo.presentationTimeUs = presentationTimeUs
+                bufferInfo.flags = flags
+                mediaMuxer.writeSampleData(trackIndex, ByteBuffer.wrap(data), bufferInfo)
+            }
         }
     }
 
