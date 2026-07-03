@@ -20,6 +20,10 @@ optional background execution — MIT-licensed, with zero third-party dependenci
   <img src="https://raw.githubusercontent.com/Farid023/light_compressor_v2/master/pictures/demo.gif" alt="Demo" width="320" />
 </p>
 
+## Contents
+
+[Highlights](#highlights) · [Platform support](#platform-support) · [Getting started](#getting-started) · [How it works](#how-it-works) · [Platform setup](#platform-setup) · [Usage](#usage) · [Large files](#large-files) · [API reference](#api-reference)
+
 ## Highlights
 
 |  |  |
@@ -411,7 +415,7 @@ try {
 }
 ```
 
-## Large files & memory
+## Large files
 
 - **Audio re-encode spills to disk, not RAM (Android).** Passing an `AudioConfig`
   makes Android buffer the encoded audio to a temp file and stream it into the muxer
@@ -677,4 +681,4 @@ example app.
 
 Released under the MIT License — see [LICENSE](LICENSE) for the full text.
 
-MIT © 2025 [Farid Gurbanov](https://github.com/Farid023)
+MIT © 2025 [Farid Gurbanov](https://github.com/Farid023) · [gurf.dev](https://gurf.dev)
