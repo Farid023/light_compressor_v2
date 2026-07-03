@@ -32,3 +32,9 @@ android/local.properties
 # Internal docs — not part of the package
 CLAUDE.md
 implementation_plan.md
+
+# Coverage output (CI artifact) — not for consumers
+coverage/
+# Dart unit tests — not needed by consumers
+test/
+example/test/
