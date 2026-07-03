@@ -3,6 +3,7 @@ import 'package:light_compressor_v2/light_compressor_v2.dart';
 
 import 'batch_compress_view.dart';
 import 'single_compress_view.dart';
+import 'theme.dart';
 
 void main() => runApp(const MyApp());
 
@@ -14,10 +15,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) => MaterialApp(
         title: 'LightCompressor',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          useMaterial3: true,
-          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF344772)),
-        ),
+        theme: AppTheme.light,
         home: const HomeScreen(),
       );
 }
