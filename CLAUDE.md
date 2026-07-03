@@ -310,6 +310,13 @@ below 29**: `lint` at minSdk 21 reports harmless `InlinedApi` constants
 re-checking the Flutter threshold **and** running the plugin's `lint` (it would
 first need `@RequiresApi` annotations on the MediaStore writer).
 
+**SDK/Flutter floor (`pubspec.yaml`)** — the package declares `sdk: ^3.5.0` /
+`flutter: ">=3.24.0"`. The Dart code alone only needs 3.0 (`sealed class` in
+[`batch_event.dart`](lib/src/batch_event.dart)); the binding floor is the **native
+build** — `compileSdk 34` above needs **AGP 8.1.1+** (stock from ~Flutter 3.16),
+and 3.24 is the SwiftPM baseline. Don't drop below 3.24 without re-checking both: a
+lower value (e.g. 3.10) lets the Dart resolve but fails a stock Android build.
+
 ---
 
 ## Apple layers — [`ios/`](ios/) and [`macos/`](macos/)
@@ -402,6 +409,14 @@ The demo app is also the only place the native pipeline runs end-to-end.
     shorter than the source), a 90° rotate swaps the displayed dims vs an
     unrotated baseline (source-agnostic), and `saturation: 0` desaturates the
     output toward grayscale (decoded via `dart:ui`).
+  - [`integration_test/input_variety_test.dart`](example/integration_test/input_variety_test.dart)
+    — input-variety coverage: no-audio, rotated, and HEVC *input* clips (each
+    derived from the sample via the plugin's own pipeline).
+  - [`integration_test/benchmark_test.dart`](example/integration_test/benchmark_test.dart)
+    — **not a correctness test:** runs the matrix (quality presets × H.264/H.265)
+    and prints a Markdown table of size-reduction + wall-clock time. Also benchmarks
+    large local clips read by device path (`adb push` to the app's external files
+    dir) with incremental per-row output — used to capture real benchmark numbers.
   - [`integration_test/support.dart`](example/integration_test/support.dart) —
     shared helpers (e.g. `expectReadableVideo`).
   - `integration_test/assets/sample.mp4` — a short sample clip the tests feed in
@@ -459,6 +474,9 @@ build step.
   [`CHANGELOG.md`](CHANGELOG.md) entry, and **update the install snippet version
   in [`README.md`](README.md)** (the `light_compressor_v2: ^x.y.z` line — easy to
   forget); [`.pubignore`](.pubignore) (which pub uses *instead of* `.gitignore`)
-  controls what ships. `git push` and `flutter pub publish` are done by the
-  maintainer — the agent environment has no git credentials.
+  controls what ships — it must keep excluding `test/`, `coverage/` and
+  `example/test/` (an uncommitted `.pubignore` edit was once lost, so an archive
+  shipped `test/`; verify with `flutter pub publish --dry-run`). `git push` and
+  `flutter pub publish` are done by the maintainer — the agent environment has no
+  git credentials.
 - **Commit messages** carry no `Co-Authored-By` / agent-attribution trailer.

@@ -63,6 +63,8 @@ Extreme high bitrates are reduced while maintaining good video quality, resultin
 
 **Minimum versions:** iOS 11 · Android API 24 · macOS 10.15
 
+**Toolchain:** Flutter 3.24+ · Dart 3.5+.
+
 Windows and Linux are **not planned** (each needs a large native effort — Media
 Foundation / GStreamer). Web is **not currently supported**.
 

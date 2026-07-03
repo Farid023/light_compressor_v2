@@ -33,8 +33,8 @@ android/local.properties
 CLAUDE.md
 implementation_plan.md
 
-# Coverage output (CI artifact) — not for consumers
+# Coverage output (CI artifact)
 coverage/
-# Dart unit tests — not needed by consumers
+# Dart unit tests
 test/
 example/test/
