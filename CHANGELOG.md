@@ -1,5 +1,11 @@
 # Changelog
 
+# 1.8.3
+
+### Fixed
+
+- **Batch progress bounds:** `BatchProgress.percent` and `overallPercent` are now clamped to `0..100`, matching single-video progress — a native value that rounds just over `100` (or a transient negative) no longer leaks into batch progress UIs.
+
 # 1.8.2
 
 ### Changed
