@@ -32,15 +32,13 @@ void main() {
         expect(
           iosFile.existsSync(),
           isTrue,
-          reason:
-              'Missing iOS copy: ${iosFile.path} '
+          reason: 'Missing iOS copy: ${iosFile.path} '
               '(run `flutter test` from the package root).',
         );
         expect(
           macosFile.existsSync(),
           isTrue,
-          reason:
-              'Missing macOS copy: ${macosFile.path} '
+          reason: 'Missing macOS copy: ${macosFile.path} '
               '(run `flutter test` from the package root).',
         );
 
@@ -50,8 +48,7 @@ void main() {
         expect(
           _firstDifference(iosBytes, macosBytes),
           isNull,
-          reason:
-              'Apple sync rule violated: $relativePath differs between '
+          reason: 'Apple sync rule violated: $relativePath differs between '
               'ios/ and macos/ (${iosBytes.length} vs ${macosBytes.length} '
               'bytes). These files must be byte-identical — edit the iOS copy, '
               'then copy it verbatim to the macOS path.',

@@ -173,30 +173,30 @@ class LightCompressor {
     final Map<String, dynamic> response = jsonDecode(
       await _channel
           .invokeMethod<dynamic>('startCompression', <String, dynamic>{
-            'path': path,
-            'videoQuality': videoQuality.toString().split('.').last,
-            'isSharedStorage': android.isSharedStorage,
-            'saveAt': android.saveAt.name,
-            'disableAudio': disableAudio,
-            'audioBitrate': audio?.bitrate,
-            'audioSampleRate': audio?.sampleRate,
-            'keepOriginalResolution': video.keepOriginalResolution,
-            'isMinBitrateCheckEnabled': isMinBitrateCheckEnabled,
-            'videoBitrateInMbps': video.videoBitrateInMbps,
-            'targetSizeBytes': video.targetSizeMb != null
-                ? video.targetSizeMb! * 1000 * 1000
-                : null,
-            'twoPass': video.twoPass,
-            'videoHeight': video.videoHeight,
-            'videoWidth': video.videoWidth,
-            'videoFps': video.videoFps,
-            'videoName': video.videoName,
-            'saveInGallery': ios.saveInGallery,
-            'videoFormat': videoFormat.name,
-            'background': background?.toMap(),
-            'edit': edit?.toMap(),
-            'debugLogging': debugLogging,
-          }),
+        'path': path,
+        'videoQuality': videoQuality.toString().split('.').last,
+        'isSharedStorage': android.isSharedStorage,
+        'saveAt': android.saveAt.name,
+        'disableAudio': disableAudio,
+        'audioBitrate': audio?.bitrate,
+        'audioSampleRate': audio?.sampleRate,
+        'keepOriginalResolution': video.keepOriginalResolution,
+        'isMinBitrateCheckEnabled': isMinBitrateCheckEnabled,
+        'videoBitrateInMbps': video.videoBitrateInMbps,
+        'targetSizeBytes': video.targetSizeMb != null
+            ? video.targetSizeMb! * 1000 * 1000
+            : null,
+        'twoPass': video.twoPass,
+        'videoHeight': video.videoHeight,
+        'videoWidth': video.videoWidth,
+        'videoFps': video.videoFps,
+        'videoName': video.videoName,
+        'saveInGallery': ios.saveInGallery,
+        'videoFormat': videoFormat.name,
+        'background': background?.toMap(),
+        'edit': edit?.toMap(),
+        'debugLogging': debugLogging,
+      }),
     );
 
     if (response['onSuccess'] != null) {
@@ -340,31 +340,30 @@ class LightCompressor {
 
     final List<dynamic>? response = await _channel
         .invokeListMethod<dynamic>('startBatchCompression', <String, dynamic>{
-          'paths': paths,
-          'videoNames': videoNames,
-          'videoQuality': videoQuality.toString().split('.').last,
-          'isSharedStorage': android.isSharedStorage,
-          'saveAt': android.saveAt.name,
-          'saveInGallery': ios.saveInGallery,
-          'keepOriginalResolution': keepOriginalResolution,
-          'videoWidth': videoWidth,
-          'videoHeight': videoHeight,
-          'videoBitrateInMbps': videoBitrateInMbps,
-          'targetSizeBytes': targetSizeMb != null
-              ? targetSizeMb * 1000 * 1000
-              : null,
-          'twoPass': twoPass,
-          'videoFps': videoFps,
-          'disableAudio': disableAudio,
-          'audioBitrate': audio?.bitrate,
-          'audioSampleRate': audio?.sampleRate,
-          'isMinBitrateCheckEnabled': isMinBitrateCheckEnabled,
-          'videoFormat': videoFormat.name,
-          'background': background?.toMap(),
-          'edit': edit?.toMap(),
-          'maxConcurrent': maxConcurrent,
-          'debugLogging': debugLogging,
-        });
+      'paths': paths,
+      'videoNames': videoNames,
+      'videoQuality': videoQuality.toString().split('.').last,
+      'isSharedStorage': android.isSharedStorage,
+      'saveAt': android.saveAt.name,
+      'saveInGallery': ios.saveInGallery,
+      'keepOriginalResolution': keepOriginalResolution,
+      'videoWidth': videoWidth,
+      'videoHeight': videoHeight,
+      'videoBitrateInMbps': videoBitrateInMbps,
+      'targetSizeBytes':
+          targetSizeMb != null ? targetSizeMb * 1000 * 1000 : null,
+      'twoPass': twoPass,
+      'videoFps': videoFps,
+      'disableAudio': disableAudio,
+      'audioBitrate': audio?.bitrate,
+      'audioSampleRate': audio?.sampleRate,
+      'isMinBitrateCheckEnabled': isMinBitrateCheckEnabled,
+      'videoFormat': videoFormat.name,
+      'background': background?.toMap(),
+      'edit': edit?.toMap(),
+      'maxConcurrent': maxConcurrent,
+      'debugLogging': debugLogging,
+    });
 
     if (response == null) {
       return <Result>[];
@@ -486,8 +485,8 @@ class LightCompressor {
     try {
       final Map<dynamic, dynamic>? result = await _channel
           .invokeMapMethod<dynamic, dynamic>('getMediaInfo', <String, dynamic>{
-            'path': path,
-          });
+        'path': path,
+      });
       if (result == null) {
         throw const MediaInfoException();
       }
@@ -522,10 +521,10 @@ class LightCompressor {
     try {
       final String? thumbnailPath = await _channel
           .invokeMethod<String>('getVideoThumbnail', <String, dynamic>{
-            'path': path,
-            'positionInMs': positionInMs < 0 ? 0 : positionInMs,
-            'quality': quality.clamp(0, 100),
-          });
+        'path': path,
+        'positionInMs': positionInMs < 0 ? 0 : positionInMs,
+        'quality': quality.clamp(0, 100),
+      });
       if (thumbnailPath == null || thumbnailPath.isEmpty) {
         throw const ThumbnailException();
       }
@@ -557,11 +556,11 @@ class LightCompressor {
     try {
       final List<String>? paths = await _channel
           .invokeListMethod<String>('getVideoThumbnails', <String, dynamic>{
-            'path': path,
-            'requests': requests
-                .map((ThumbnailRequest request) => request.toMap())
-                .toList(),
-          });
+        'path': path,
+        'requests': requests
+            .map((ThumbnailRequest request) => request.toMap())
+            .toList(),
+      });
       if (paths == null) {
         throw const ThumbnailException();
       }
@@ -597,20 +596,20 @@ class LightCompressor {
     bool disableAudio = false,
   }) async {
     try {
-      final Map<dynamic, dynamic>? result = await _channel
-          .invokeMapMethod<dynamic, dynamic>(
-            'getCompressionEstimate',
-            <String, dynamic>{
-              'path': path,
-              'videoQuality': videoQuality.toString().split('.').last,
-              'videoFormat': videoFormat.name,
-              'keepOriginalResolution': keepOriginalResolution,
-              'videoWidth': videoWidth,
-              'videoHeight': videoHeight,
-              'videoBitrateInMbps': videoBitrateInMbps,
-              'disableAudio': disableAudio,
-            },
-          );
+      final Map<dynamic, dynamic>? result =
+          await _channel.invokeMapMethod<dynamic, dynamic>(
+        'getCompressionEstimate',
+        <String, dynamic>{
+          'path': path,
+          'videoQuality': videoQuality.toString().split('.').last,
+          'videoFormat': videoFormat.name,
+          'keepOriginalResolution': keepOriginalResolution,
+          'videoWidth': videoWidth,
+          'videoHeight': videoHeight,
+          'videoBitrateInMbps': videoBitrateInMbps,
+          'disableAudio': disableAudio,
+        },
+      );
       if (result == null) {
         throw const EstimateException();
       }

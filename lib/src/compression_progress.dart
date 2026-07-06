@@ -37,9 +37,8 @@ class CompressionProgress {
     }
     // Back-compat: a bare numeric percent (the pre-1.8.0 wire).
     return CompressionProgress(
-      percent: ((event as num?)?.toDouble() ?? 0.0)
-          .clamp(0.0, 100.0)
-          .toDouble(),
+      percent:
+          ((event as num?)?.toDouble() ?? 0.0).clamp(0.0, 100.0).toDouble(),
     );
   }
 

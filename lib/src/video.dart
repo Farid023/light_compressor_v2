@@ -12,18 +12,18 @@ class Video {
     this.targetSizeMb,
     this.videoFps,
     this.twoPass = false,
-  }) : assert(
-         targetSizeMb == null || videoBitrateInMbps == null,
-         'targetSizeMb and videoBitrateInMbps are mutually exclusive',
-       ),
-       assert(
-         targetSizeMb == null || targetSizeMb > 0,
-         'targetSizeMb must be greater than 0',
-       ),
-       assert(
-         videoFps == null || videoFps > 0,
-         'videoFps must be greater than 0',
-       );
+  })  : assert(
+          targetSizeMb == null || videoBitrateInMbps == null,
+          'targetSizeMb and videoBitrateInMbps are mutually exclusive',
+        ),
+        assert(
+          targetSizeMb == null || targetSizeMb > 0,
+          'targetSizeMb must be greater than 0',
+        ),
+        assert(
+          videoFps == null || videoFps > 0,
+          'videoFps must be greater than 0',
+        );
 
   /// The name of the output video file (e.g., `compressed_video.mp4`).
   ///

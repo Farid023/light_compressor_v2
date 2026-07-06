@@ -92,16 +92,17 @@ class MediaInfo {
     int? rotation,
     double? frameRate,
     String? mimeType,
-  }) => MediaInfo(
-    width: width ?? this.width,
-    height: height ?? this.height,
-    duration: duration ?? this.duration,
-    fileSize: fileSize ?? this.fileSize,
-    bitrate: bitrate ?? this.bitrate,
-    rotation: rotation ?? this.rotation,
-    frameRate: frameRate ?? this.frameRate,
-    mimeType: mimeType ?? this.mimeType,
-  );
+  }) =>
+      MediaInfo(
+        width: width ?? this.width,
+        height: height ?? this.height,
+        duration: duration ?? this.duration,
+        fileSize: fileSize ?? this.fileSize,
+        bitrate: bitrate ?? this.bitrate,
+        rotation: rotation ?? this.rotation,
+        frameRate: frameRate ?? this.frameRate,
+        mimeType: mimeType ?? this.mimeType,
+      );
 
   @override
   String toString() =>
@@ -124,13 +125,13 @@ class MediaInfo {
 
   @override
   int get hashCode => Object.hash(
-    width,
-    height,
-    duration,
-    fileSize,
-    bitrate,
-    rotation,
-    frameRate,
-    mimeType,
-  );
+        width,
+        height,
+        duration,
+        fileSize,
+        bitrate,
+        rotation,
+        frameRate,
+        mimeType,
+      );
 }

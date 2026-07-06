@@ -47,6 +47,6 @@ class BackgroundConfig {
 
   /// Serialises this configuration into the map sent across the method channel.
   Map<String, dynamic> toMap() => <String, dynamic>{
-    'notificationTitle': notificationTitle,
-  };
+        'notificationTitle': notificationTitle,
+      };
 }

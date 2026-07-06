@@ -11,11 +11,12 @@ class AudioConfig {
   /// unchanged (the source value is used). Provided values must be greater
   /// than 0.
   const AudioConfig({this.bitrate, this.sampleRate})
-    : assert(bitrate == null || bitrate > 0, 'bitrate must be greater than 0'),
-      assert(
-        sampleRate == null || sampleRate > 0,
-        'sampleRate must be greater than 0',
-      );
+      : assert(
+            bitrate == null || bitrate > 0, 'bitrate must be greater than 0'),
+        assert(
+          sampleRate == null || sampleRate > 0,
+          'sampleRate must be greater than 0',
+        );
 
   /// Target AAC bitrate in bits per second (e.g. `128000`).
   final int? bitrate;

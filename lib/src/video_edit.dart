@@ -22,22 +22,22 @@ class VideoEdit {
     this.brightness,
     this.contrast,
     this.saturation,
-  }) : assert(
-         trimStartMs == null || trimStartMs >= 0,
-         'trimStartMs must be greater than or equal to 0',
-       ),
-       assert(
-         trimEndMs == null || trimEndMs > (trimStartMs ?? 0),
-         'trimEndMs must be greater than trimStartMs (or 0 when no start)',
-       ),
-       assert(
-         rotationDegrees == null ||
-             rotationDegrees == 0 ||
-             rotationDegrees == 90 ||
-             rotationDegrees == 180 ||
-             rotationDegrees == 270,
-         'rotationDegrees must be one of 0, 90, 180, 270',
-       );
+  })  : assert(
+          trimStartMs == null || trimStartMs >= 0,
+          'trimStartMs must be greater than or equal to 0',
+        ),
+        assert(
+          trimEndMs == null || trimEndMs > (trimStartMs ?? 0),
+          'trimEndMs must be greater than trimStartMs (or 0 when no start)',
+        ),
+        assert(
+          rotationDegrees == null ||
+              rotationDegrees == 0 ||
+              rotationDegrees == 90 ||
+              rotationDegrees == 180 ||
+              rotationDegrees == 270,
+          'rotationDegrees must be one of 0, 90, 180, 270',
+        );
 
   /// Start of the kept range, in milliseconds from the beginning of the source.
   ///
@@ -76,11 +76,11 @@ class VideoEdit {
   /// `null` so the native side can treat them as "not set"; the color knobs are
   /// clamped to their valid ranges.
   Map<String, dynamic> toMap() => <String, dynamic>{
-    'trimStartMs': trimStartMs,
-    'trimEndMs': trimEndMs,
-    'rotationDegrees': rotationDegrees,
-    'brightness': brightness?.clamp(-1.0, 1.0),
-    'contrast': contrast?.clamp(0.0, 2.0),
-    'saturation': saturation?.clamp(0.0, 2.0),
-  };
+        'trimStartMs': trimStartMs,
+        'trimEndMs': trimEndMs,
+        'rotationDegrees': rotationDegrees,
+        'brightness': brightness?.clamp(-1.0, 1.0),
+        'contrast': contrast?.clamp(0.0, 2.0),
+        'saturation': saturation?.clamp(0.0, 2.0),
+      };
 }
