@@ -7,89 +7,108 @@
 [![Pub Likes](https://img.shields.io/pub/likes/light_compressor_v2)](https://pub.dev/packages/light_compressor_v2)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Native light video compression for Flutter (No FFmpeg) — **single** or **batch**, H.264/H.265, target size, trim, rotate and colour, with live progress and cancellation.
+**Fast, native video compression for Flutter — no FFmpeg, no bundled binaries.**
 
-It generates a compressed MP4 with reduced width, height, and bitrate while keeping good visual quality, and also exposes media metadata, thumbnail extraction, and cache cleanup.
+Compress a single clip or an entire batch on each platform's own hardware codecs
+(Android `MediaCodec` / `MediaMuxer`, Apple `AVFoundation`). Beyond compression,
+the plugin is a small media toolkit: H.264 / H.265 with automatic fallback, target
+file size, frame-rate and audio control, trim / rotate / colour edits, thumbnails,
+media info, a pre-flight size estimate, live progress with ETA, cancellation, and
+optional background execution — MIT-licensed, with zero third-party dependencies.
 
-## 🛠️ How it Works
-
-Extreme high bitrates are reduced while maintaining good video quality, resulting in a much smaller file size.
-
-* **Quality presets:** choose between 5 compression qualities — `very_low`, `low`, `medium`, `high`, `very_high`. The plugin automatically computes the target bitrate for the output.
-* **Minimum bitrate guard:** with `isMinBitrateCheckEnabled` (default **2 Mbps** threshold), the plugin skips compression for low-bitrate or already-compressed videos, avoiding cumulative quality degradation.
-
----
-
-## ✨ Features
-
-- **Single & batch compression** — compress one video, or many in a single call with per-item results and progress.
-- **Five quality presets** — the plugin calculates the optimal bitrate automatically.
-- **H.264 & H.265 (HEVC)** — pick the output codec via `videoFormat`; H.265 produces smaller files and automatically falls back to H.264 when the device can't encode it. `OnSuccess.usedFormat` reports the codec actually used.
-- **Custom resolution & bitrate** — override width, height, and bitrate when presets aren't enough.
-- **Target file size** — compress toward a maximum output size in megabytes via `targetSizeMb`; the compressor solves for the bitrate and reports whether the target was reachable (`OnSuccess.targetSizeMet`). Add `twoPass: true` to re-encode once more when the first pass overshoots, landing closer to the target (`OnSuccess.passesUsed`).
-- **Frame-rate control** — downsample the output frame rate via `videoFps` (downsample-only — never duplicates frames).
-- **Audio re-encoding** — re-encode the audio track as AAC with a custom bitrate (and sample rate on iOS/macOS) via `AudioConfig`.
-- **Lightweight editing** — trim (`trimStartMs` / `trimEndMs`), rotate by a quarter-turn (`rotationDegrees`), and adjust colour (`brightness` / `contrast` / `saturation`) while compressing, via `VideoEdit` — still 100% native (no ffmpeg).
-- **Structured success result** — `OnSuccess` carries `originalSize`, `compressedSize`, `duration`, and `ratio` (percentage reduction).
-- **Media info** — read width, height, duration, bitrate, rotation, frame rate, and MIME type via `getMediaInfo`.
-- **Thumbnail extraction** — grab a JPEG frame at any timecode via `getVideoThumbnail`, or several at once via `getVideoThumbnails`.
-- **Compression estimate** — predict the output size, bitrate and resolution *before* compressing via `getCompressionEstimate` (no transcode).
-- **Running-state query** — check whether a compression is in progress via `isCompressing`.
-- **Progress streams** — real-time percentage for single (`onProgressUpdated`) and per-item + overall for batch (`onBatchUpdate`).
-- **Cancellation** — cancel any in-progress compression with a single call.
-- **Background execution** — keep compressing while the app is backgrounded or the screen is off via `BackgroundConfig` (Android foreground service; macOS App Nap suppression; not supported on iOS).
-- **Typed exceptions** — `PermissionDeniedException`, `UnsupportedVideoException`, `VideoNotFoundException`, and more — react programmatically instead of parsing strings.
-- **Minimum bitrate guard** — optionally skip compression for already-low-bitrate videos.
-- **Disable audio** — generate silent videos when audio isn't needed.
-- **Cache cleanup** — remove temporary files with `clearCache`.
-- **iOS / macOS:** Swift Package Manager (SPM) support alongside CocoaPods.
-- **Android:** fully Kotlin native layer, Gradle KTS build script.
-
----
-
-## 📸 Demo
-
-<p align="left">
-  <img src="https://raw.githubusercontent.com/Farid023/light_compressor_v2/master/pictures/demo.gif" alt="Demo GIF" width="300" />
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Farid023/light_compressor_v2/master/pictures/single.gif" alt="Single-video compression" width="300" />
+  &nbsp;&nbsp;&nbsp;
+  <img src="https://raw.githubusercontent.com/Farid023/light_compressor_v2/master/pictures/batch.gif" alt="Batch compression" width="300" />
+</p>
+<p align="center">
+  <em>Single-video flow (left) &nbsp;·&nbsp; batch with per-item and overall progress (right)</em>
 </p>
 
----
+## Contents
 
-## 📱 Platform Support
+[Highlights](#highlights) · [Platform support](#platform-support) · [Getting started](#getting-started) · [How it works](#how-it-works) · [Platform setup](#platform-setup) · [Usage](#usage) · [Large files](#large-files) · [API reference](#api-reference)
 
-| iOS | Android | macOS |
-|:---:|:-------:|:-----:|
-| ✅  |  ✅   |  ✅   |
+## Highlights
+
+|  |  |
+|--|--|
+| Single & batch compression | H.264 / H.265 with automatic fallback |
+| Target file size (optional two-pass) | Trim, rotate & colour while compressing |
+| Frame-rate & AAC audio control | Thumbnails & media info |
+| Live progress with ETA & bytes | Pre-flight size estimate (no transcode) |
+| Cancellation & running-state query | Background execution (Android) |
+| Typed, catchable exceptions | 100% native · no FFmpeg · MIT · zero deps |
+
+## Platform support
+
+| iOS | Android | macOS | Windows / Linux | Web |
+|:---:|:-------:|:-----:|:---------------:|:---:|
+| ✅ | ✅ | ✅ | Not planned | Not supported |
 
 **Minimum versions:** iOS 11 · Android API 24 · macOS 10.15
+**Toolchain:** Flutter 3.24+ · Dart 3.5+
 
-Windows and Linux are **not planned** (each needs a large native effort — Media
-Foundation / GStreamer). Web is **not currently supported**.
+Windows and Linux are not planned (each needs a large native effort — Media
+Foundation / GStreamer).
 
----
+## Getting started
 
-## 📦 Installation
-
-Add the dependency to your `pubspec.yaml`:
+Add the dependency:
 
 ```yaml
 dependencies:
-  light_compressor_v2: ^1.8.1
+  light_compressor_v2: ^1.8.2
 ```
-
-Then run:
 
 ```bash
 flutter pub get
 ```
 
-### iOS / macOS — Podfile
+Then compress a video:
 
-No extra Podfile configuration is required. The plugin ships with both a `.podspec` (CocoaPods) and a `Package.swift` (SPM); Flutter picks the appropriate integration automatically.
+```dart
+import 'package:light_compressor_v2/light_compressor_v2.dart';
 
-### Android — minSdk
+final Result result = await LightCompressor().compressVideo(
+  path: '/path/to/source.mp4',
+  videoQuality: VideoQuality.medium,
+  video: Video(videoName: 'compressed.mp4'),
+  android: AndroidConfig(isSharedStorage: true, saveAt: SaveAt.Movies),
+  ios: IOSConfig(saveInGallery: true),
+);
 
-The plugin requires **minSdk 24**. If your app targets a lower SDK, raise it in `android/app/build.gradle`:
+if (result is OnSuccess) {
+  print('Saved to ${result.destinationPath} — '
+      '${result.ratio.toStringAsFixed(1)}% smaller');
+} else if (result is OnFailure) {
+  print('Failed: ${result.message}');
+} else if (result is OnCancelled) {
+  print('Cancelled');
+}
+```
+
+`LightCompressor()` is a singleton, so you can construct it anywhere and share the
+same progress streams.
+
+## How it works
+
+Compression lowers a video's bitrate (and, by default, its resolution) while
+preserving perceptual quality, producing a smaller MP4.
+
+- **Quality presets** — choose one of five (`very_low`, `low`, `medium`, `high`,
+  `very_high`) and the plugin derives the target bitrate automatically. Override it
+  with a custom `videoBitrateInMbps`, a `targetSizeMb`, or explicit dimensions when
+  you need finer control.
+- **Minimum-bitrate guard** — with `isMinBitrateCheckEnabled` (on by default, a
+  ~2 Mbps threshold) the plugin skips already-low-bitrate sources instead of
+  re-compressing them, avoiding cumulative quality loss.
+
+## Platform setup
+
+### Android
+
+The plugin requires **minSdk 24**. Raise it in `android/app/build.gradle` if needed:
 
 ```groovy
 android {
@@ -99,50 +118,57 @@ android {
 }
 ```
 
-> **Why 24 and not lower?** The native engine itself runs on API 21+, but the
-> Flutter Gradle toolchain sets the practical floor: recent Flutter **fails the
-> build** for an app `minSdk` below 23 and **warns** below 24, with no opt-out.
-> So 24 is the lowest clean target. To reach Android 6.0 you may set `minSdk 23`
-> (your build then shows Flutter's "below 24" warning); 21/22 are not buildable
-> on a current Flutter toolchain.
+> **Why 24 and not lower?** The native engine runs on API 21+, but recent Flutter's
+> Gradle toolchain sets the practical floor: it **fails the build** for an app
+> `minSdk` below 23 and **warns** below 24, with no opt-out. 24 is the lowest clean
+> target (23 still builds, with a warning; 21/22 are not buildable on a current
+> Flutter).
 
----
+Declare the storage permissions your target API level needs in `AndroidManifest.xml`:
 
-## 🚀 Usage
+```xml
+<!-- API < 29 -->
+<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+<uses-permission
+    android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+    android:maxSdkVersion="28"
+    tools:ignore="ScopedStorage" />
 
-```dart
-import 'package:light_compressor_v2/light_compressor_v2.dart';
+<!-- API 29–32 -->
+<uses-permission
+    android:name="android.permission.READ_EXTERNAL_STORAGE"
+    android:maxSdkVersion="32" />
 
-final compressor = LightCompressor();
+<!-- API ≥ 33 -->
+<uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
 ```
 
-### Compress a single video
+**Background execution** needs no manifest changes on your side — the plugin already
+declares the foreground service and the `FOREGROUND_SERVICE`,
+`FOREGROUND_SERVICE_DATA_SYNC` and `POST_NOTIFICATIONS` permissions, and requests the
+`POST_NOTIFICATIONS` runtime prompt (Android 13+) for you. **ProGuard / R8** needs no
+special rules.
 
-```dart
-final Result result = await compressor.compressVideo(
-  path: '/path/to/source.mp4',
-  videoQuality: VideoQuality.medium,
-  isMinBitrateCheckEnabled: false,
-  video: Video(videoName: 'compressed.mp4'),
-  android: AndroidConfig(isSharedStorage: true, saveAt: SaveAt.Movies),
-  ios: IOSConfig(saveInGallery: true),
-);
+### iOS / macOS
 
-if (result is OnSuccess) {
-  print('Saved to ${result.destinationPath}');
-  print('Reduced by ${result.ratio.toStringAsFixed(1)}% '
-      '(${result.originalSize} → ${result.compressedSize} bytes)');
-} else if (result is OnFailure) {
-  print('Failed: ${result.message}');
-} else if (result is OnCancelled) {
-  print('Cancelled');
-}
+The plugin ships both a `Package.swift` (Swift Package Manager) and a `.podspec`
+(CocoaPods); Flutter ≥ 3.24 uses SPM and older versions fall back to CocoaPods
+automatically — no Podfile changes required.
+
+If you save to the photo library (`IOSConfig(saveInGallery: true)`), add the usage
+description to `Info.plist`:
+
+```xml
+<key>NSPhotoLibraryUsageDescription</key>
+<string>Used to save compressed videos.</string>
 ```
 
-### Compress a batch of videos
+## Usage
 
-A single failing video does not stop the others — its slot in the returned
-list becomes an `OnFailure`. Results are returned in the same order as `paths`.
+### Batch compression
+
+A single failing video never stops the others — its slot in the returned list
+becomes an `OnFailure`, and results come back in the same order as `paths`.
 
 ```dart
 final List<Result> results = await compressor.compressVideos(
@@ -158,9 +184,9 @@ for (final (int i, Result r) in results.indexed) {
 }
 ```
 
-By default Android compresses up to two videos at once and Apple starts them
-all. Pass `maxConcurrent` to cap that — e.g. `maxConcurrent: 1` for strictly
-sequential compression, which lowers peak memory and device heat:
+By default Android compresses up to two videos at once and Apple starts them all.
+Cap it with `maxConcurrent` — e.g. `maxConcurrent: 1` for strictly sequential
+compression, which lowers peak memory and device heat:
 
 ```dart
 await compressor.compressVideos(
@@ -173,11 +199,10 @@ await compressor.compressVideos(
 );
 ```
 
-### Run in the background
+### Background execution
 
-Pass a `BackgroundConfig` to keep a compression running while the app is
-backgrounded or the screen turns off. Works for both `compressVideo` and
-`compressVideos`:
+Pass a `BackgroundConfig` to keep compressing while the app is backgrounded or the
+screen is off (works for both entry points):
 
 ```dart
 final result = await compressor.compressVideo(
@@ -186,32 +211,25 @@ final result = await compressor.compressVideo(
   video: Video(videoName: 'compressed.mp4'),
   android: AndroidConfig(saveAt: SaveAt.Movies),
   ios: IOSConfig(saveInGallery: true),
-  background: const BackgroundConfig(
-    notificationTitle: 'Compressing video',
-  ),
+  background: const BackgroundConfig(notificationTitle: 'Compressing video'),
 );
 ```
 
-Platform behaviour differs significantly:
+Behaviour differs by platform:
 
-- **Android** — runs under a foreground service. The ongoing notification shows
-  live progress (bar + %), elapsed time, the current file (single) or
-  a `done / total` count (batch) and a Cancel action. The title comes from
-  `BackgroundConfig`. The plugin declares the service + receiver and requests
-  `POST_NOTIFICATIONS` (Android 13+) automatically — no host-app manifest
-  changes are needed.
-- **macOS** — suppresses App Nap so the process keeps full CPU in the
-  background. The notification fields are ignored.
-- **iOS** — **not supported.** iOS suspends backgrounded apps within seconds
-  and offers no sanctioned way to keep video transcoding running, so passing a
-  `BackgroundConfig` has no effect; the compression pauses and resumes when the
-  app returns to the foreground.
+- **Android** — runs under a foreground service with an ongoing notification showing
+  live progress, elapsed time, the current file (single) or a `done / total` count
+  (batch) and a Cancel action.
+- **macOS** — suppresses App Nap so the process keeps full CPU in the background;
+  the notification fields are ignored.
+- **iOS** — **not supported.** iOS suspends backgrounded apps within seconds, so a
+  `BackgroundConfig` has no effect; compression pauses and resumes with the app.
 
-### Choose the output codec (H.265 / HEVC)
+### Output codec (H.265 / HEVC)
 
-By default the output is H.264 (AVC). Pass `videoFormat: VideoFormat.h265` to
-request HEVC, which yields smaller files at comparable quality. It applies to
-both `compressVideo` and `compressVideos`:
+The default output is H.264 (AVC). Pass `videoFormat: VideoFormat.h265` to request
+HEVC — a more efficient codec (better quality per bit). It applies to both entry
+points:
 
 ```dart
 final result = await compressor.compressVideo(
@@ -224,21 +242,21 @@ final result = await compressor.compressVideo(
 );
 
 if (result is OnSuccess) {
-  // Tells you whether H.265 was honoured or fell back to H.264.
-  print('Encoded with ${result.usedFormat.name}');
+  print('Encoded with ${result.usedFormat.name}'); // h265 — or h264 if it fell back
 }
 ```
 
-`VideoFormat.h265` is used only when the device has a hardware HEVC encoder
-(Android excludes software-only encoders; iOS/macOS check the platform's
-advertised HEVC support). When it isn't available the compressor **silently
-falls back to H.264** rather than failing — always read `OnSuccess.usedFormat`
-to know what you got.
+HEVC is used only when the device has a hardware HEVC encoder (Android excludes
+software-only encoders; iOS/macOS check the platform's advertised support). When it
+isn't available the compressor **silently falls back to H.264** rather than failing —
+always read `OnSuccess.usedFormat` to know what you got. The plugin targets the same
+bitrate for both codecs, so to shrink files further with HEVC, pair it with a lower
+`videoBitrateInMbps` or a `targetSizeMb`.
 
-### Target a file size, frame rate, or audio bitrate
+### Target size, frame rate, and audio
 
-Set `targetSizeMb` and/or `videoFps` on `Video` (the same fields are flat
-parameters on `compressVideos`), and pass an `AudioConfig` as `audio:`:
+Set `targetSizeMb` and/or `videoFps` on `Video` (the same fields are flat parameters
+on `compressVideos`), and pass an `AudioConfig` as `audio:`:
 
 ```dart
 final Result result = await compressor.compressVideo(
@@ -262,17 +280,16 @@ if (result is OnSuccess && !result.targetSizeMet) {
 ```
 
 `targetSizeMb` is approximate (single-pass is typically within ~10–15%). Add
-`twoPass: true` to land closer: the compressor re-encodes a second time only if
-the first pass overshot the target (an undershoot is kept as-is), roughly
-doubling the time on overshooting clips. `OnSuccess.passesUsed` reports how many
-passes ran. `audioSampleRate` is honored on iOS/macOS; **Android re-encodes audio
-at the source sample rate** (no resampler), so only the audio `bitrate` applies
-there.
+`twoPass: true` to land closer: the compressor re-encodes a second time only if the
+first pass overshot the target (an undershoot is kept as-is), roughly doubling the
+time on overshooting clips. `OnSuccess.passesUsed` reports how many passes ran.
+`audioSampleRate` is honoured on iOS/macOS; **Android re-encodes audio at the source
+sample rate** (no resampler), so only the audio `bitrate` applies there.
 
 ### Trim, rotate, and adjust colour
 
 Pass an optional `VideoEdit` as `edit:` to trim to a time range, rotate by a
-quarter-turn, and/or adjust colour while compressing (both entry points accept it):
+quarter-turn, and/or adjust colour while compressing:
 
 ```dart
 final Result result = await compressor.compressVideo(
@@ -282,40 +299,37 @@ final Result result = await compressor.compressVideo(
   ios: IOSConfig(),
   video: Video(videoName: 'edited.mp4'),
   edit: const VideoEdit(
-    trimStartMs: 1000,    // keep from 1s…
-    trimEndMs: 5000,      // …to 5s (output duration ≈ 4s, rebased to 0)
-    rotationDegrees: 90,  // quarter-turn on top of the source orientation
-    saturation: 0.0,      // 0..2 (1 = no change); 0 = grayscale
-    brightness: 0.1,      // -1..1 (0 = no change)
+    trimStartMs: 1000,   // keep from 1s…
+    trimEndMs: 5000,     // …to 5s (output ≈ 4s, rebased to 0)
+    rotationDegrees: 90, // quarter-turn on top of the source orientation
+    saturation: 0.0,     // 0..2 (1 = no change); 0 = grayscale
+    brightness: 0.1,     // -1..1 (0 = no change)
   ),
 );
 ```
 
 Trimming is frame-accurate (the clip is re-encoded) and the reported `duration`
-reflects the trimmed length. Rotation is a cheap container-metadata turn that
-players honour — a 90°/270° turn swaps the displayed dimensions; the stored
-frames are not re-rendered. Colour adjustment (`brightness` / `contrast` /
-`saturation`, CIColorControls semantics) is baked into the output pixels —
-Android via a GL shader, Apple via a `CIColorControls` video composition — so
-exact pixel parity across platforms is not guaranteed. Either trim bound is
-optional, and an empty `VideoEdit` (or `null`) leaves the video untouched.
+reflects the trimmed length. Rotation is a cheap container-metadata turn that players
+honour — a 90°/270° turn swaps the displayed dimensions without re-rendering frames.
+Colour adjustment (`brightness` / `contrast` / `saturation`, CIColorControls
+semantics) is baked into the pixels — Android via a GL shader, Apple via a
+`CIColorControls` composition — so exact pixel parity across platforms is not
+guaranteed. Every field is optional; an empty `VideoEdit` (or `null`) leaves the
+video untouched.
 
-### Listen to progress
+### Progress
 
 Single video — a `Stream<double>` from `0` to `100`:
 
 ```dart
 StreamBuilder<double>(
   stream: compressor.onProgressUpdated,
-  builder: (context, snapshot) {
-    final percent = snapshot.data ?? 0;
-    return Text('${percent.toStringAsFixed(0)}%');
-  },
+  builder: (context, snapshot) => Text('${(snapshot.data ?? 0).toStringAsFixed(0)}%'),
 );
 ```
 
 For estimated time remaining and the output size as it grows, listen to
-`onProgressDetail` instead (a `Stream<CompressionProgress>`):
+`onProgressDetail` (a `Stream<CompressionProgress>`):
 
 ```dart
 compressor.onProgressDetail.listen((CompressionProgress p) {
@@ -324,9 +338,8 @@ compressor.onProgressDetail.listen((CompressionProgress p) {
 });
 ```
 
-`etaMs` is a rough projection (an indicator, not a guarantee) and is `null`
-until it becomes estimable; `bytesProcessed` is the encoded output written so
-far. `onProgressUpdated` stays available for just the percentage.
+`etaMs` is a rough projection (an indicator, not a guarantee) and is `null` until it
+becomes estimable; `bytesProcessed` is the encoded output written so far.
 
 Batch — per-video and overall progress, plus a completion event per item.
 `BatchProgress` carries the same `etaMs` / `elapsedMs` / `bytesProcessed` fields:
@@ -342,58 +355,29 @@ compressor.onBatchUpdate.listen((BatchEvent event) {
 });
 ```
 
-### Cancel compression
+### Cancellation
 
 ```dart
 await compressor.cancelCompression();
 ```
 
-The cancelled job is reported as an `OnCancelled` result on the pending
-`compressVideo` / `compressVideos` call.
+The cancelled job resolves the pending `compressVideo` / `compressVideos` call to an
+`OnCancelled` result.
 
-### Read media info
+### Media info, thumbnails, and estimates
 
 ```dart
+// Metadata — dimensions, duration, bitrate, rotation, frame rate, MIME type.
 final MediaInfo info = await compressor.getMediaInfo('/path/to/video.mp4');
-print('${info.displayWidth} × ${info.displayHeight}');
-print('Duration: ${info.duration}, bitrate: ${info.bitrate} bps');
-```
+print('${info.displayWidth} × ${info.displayHeight}, ${info.duration}');
 
-### Extract a thumbnail
-
-```dart
-final String thumbnailPath = await compressor.getVideoThumbnail(
-  '/path/to/video.mp4',
-  positionInMs: 2000, // grab the frame at 2s
-  quality: 80,
+// A single JPEG frame at a timecode.
+final String thumb = await compressor.getVideoThumbnail(
+  '/path/to/video.mp4', positionInMs: 2000, quality: 80,
 );
-```
 
-### Estimate the result before compressing
-
-Predict the output **without** running a transcode — handy for showing the user
-the expected size up front:
-
-```dart
-final CompressionEstimate estimate = await compressor.getCompressionEstimate(
-  '/path/to/video.mp4',
-  videoQuality: VideoQuality.medium,
-);
-print('~${estimate.estimatedSizeBytes} bytes, '
-    '${estimate.outputWidth}×${estimate.outputHeight}, '
-    '~${estimate.estimatedRatio.toStringAsFixed(0)}% smaller');
-```
-
-The figures are approximate (single-pass), computed from the same bitrate and
-resize math the compressor uses.
-
-### Extract several thumbnails at once
-
-Grab multiple frames in a single native call — more efficient than calling
-`getVideoThumbnail` repeatedly. Paths come back in the same order as the requests:
-
-```dart
-final List<String> thumbnails = await compressor.getVideoThumbnails(
+// Several frames in one native call (paths returned in request order).
+final List<String> thumbs = await compressor.getVideoThumbnails(
   '/path/to/video.mp4',
   const <ThumbnailRequest>[
     ThumbnailRequest(positionInMs: 0),
@@ -401,31 +385,32 @@ final List<String> thumbnails = await compressor.getVideoThumbnails(
     ThumbnailRequest(positionInMs: 2000),
   ],
 );
+
+// Predict the output size/resolution WITHOUT transcoding.
+final CompressionEstimate est = await compressor.getCompressionEstimate(
+  '/path/to/video.mp4', videoQuality: VideoQuality.medium,
+);
+print('~${est.estimatedSizeBytes} bytes, ${est.outputWidth}×${est.outputHeight}');
 ```
 
-### Check whether a compression is running
+### Running-state and cache
 
 ```dart
 if (await compressor.isCompressing()) {
   // e.g. disable the "Compress" button
 }
+
+await compressor.clearCache(); // delete temporary files created during compression
 ```
 
-### Clear cached files
+### Error handling
 
-```dart
-await compressor.clearCache();
-```
-
-### Handle errors
-
-Recognized native failures are thrown as typed exceptions; unclassified
-failures are returned as `OnFailure` instead.
+Recognised native failures are thrown as typed exceptions; unclassified failures are
+returned as `OnFailure` instead.
 
 ```dart
 try {
   final info = await compressor.getMediaInfo('/path/to/video.mp4');
-  // use info...
 } on VideoNotFoundException catch (e) {
   print(e.message);
 } on PermissionDeniedException catch (e) {
@@ -435,26 +420,20 @@ try {
 }
 ```
 
----
-
-## Large files & memory
-
-A few things to know when compressing very large or very long sources:
+## Large files
 
 - **Audio re-encode spills to disk, not RAM (Android).** Passing an `AudioConfig`
-  (AAC re-encode) makes Android buffer the encoded audio to a temp file and then
-  stream it into the muxer — needed because `MediaMuxer` wants the audio format
-  before it starts — so memory stays flat regardless of audio **duration**. The
-  passthrough copy (no `AudioConfig`) doesn't buffer at all.
-- **~4 GB MP4 output ceiling (Android).** `MediaMuxer`'s MP4 writer uses 32-bit
-  box offsets, so an output approaching 4 GB may fail or truncate. For very
-  large/long sources, pass `targetSizeMb` to keep the output well under that.
-- **iOS/macOS** stream through `AVAssetReader`/`AVAssetWriter`, so they don't
-  buffer the whole track; the 4 GB note is Android-specific.
+  makes Android buffer the encoded audio to a temp file and stream it into the muxer
+  (needed because `MediaMuxer` wants the audio format before it starts), so memory
+  stays flat regardless of audio duration. The passthrough copy (no `AudioConfig`)
+  doesn't buffer at all.
+- **~4 GB MP4 output ceiling (Android).** `MediaMuxer`'s MP4 writer uses 32-bit box
+  offsets, so an output approaching 4 GB may fail or truncate. Pass `targetSizeMb` to
+  keep very large/long sources well under that.
+- **iOS/macOS** stream through `AVAssetReader` / `AVAssetWriter`, so they don't buffer
+  the whole track; the 4 GB note is Android-specific.
 
----
-
-## 📖 API Reference
+## API reference
 
 ### `compressVideo()` → `Future<Result>`
 
@@ -470,7 +449,7 @@ A few things to know when compressing very large or very long sources:
 | `videoFormat` | `VideoFormat` | | `h264` | Output codec: `h264` or `h265` (HEVC). Falls back to H.264 when HEVC isn't supported. See [`VideoFormat`](#videoformat). |
 | `background` | `BackgroundConfig?` | | `null` | Keep running while the app is backgrounded. See [`BackgroundConfig`](#backgroundconfig). |
 | `audio` | `AudioConfig?` | | `null` | Re-encode the audio track as AAC. See [`AudioConfig`](#audioconfig). |
-| `edit` | `VideoEdit?` | | `null` | Trim and/or rotate while compressing. See [`VideoEdit`](#videoedit). |
+| `edit` | `VideoEdit?` | | `null` | Trim, rotate and/or adjust colour while compressing. See [`VideoEdit`](#videoedit). |
 | `debugLogging` | `bool` | | `false` | Emit native structured debug logs for this run (paths reduced to base names). |
 
 ### `compressVideos()` → `Future<List<Result>>`
@@ -492,7 +471,7 @@ A few things to know when compressing very large or very long sources:
 | `videoFormat` | `VideoFormat` | | `h264` | Output codec for every video: `h264` or `h265` (HEVC). See [`VideoFormat`](#videoformat). |
 | `background` | `BackgroundConfig?` | | `null` | Keep the whole batch running while backgrounded. See [`BackgroundConfig`](#backgroundconfig). |
 | `audio` | `AudioConfig?` | | `null` | Re-encode the audio track as AAC. See [`AudioConfig`](#audioconfig). |
-| `edit` | `VideoEdit?` | | `null` | Trim and/or rotate every video. See [`VideoEdit`](#videoedit). |
+| `edit` | `VideoEdit?` | | `null` | Trim, rotate and/or adjust colour on every video. See [`VideoEdit`](#videoedit). |
 | `maxConcurrent` | `int?` | | `null` | Cap how many videos transcode at once (`>= 1`). Unset keeps the platform default (Android 2; Apple starts all). No effect on a single video. |
 | `debugLogging` | `bool` | | `false` | Emit native structured debug logs for every video in the batch (paths reduced to base names). |
 
@@ -572,13 +551,13 @@ Output codec, written into an MP4/QuickTime container.
 | Value | Description |
 |-------|-------------|
 | `h264` | H.264 / AVC. The widely compatible default. |
-| `h265` | H.265 / HEVC. Smaller files at comparable quality; **requires a hardware HEVC encoder** and automatically falls back to `h264` otherwise. Check [`OnSuccess.usedFormat`](#result-types) for the codec actually used. |
+| `h265` | H.265 / HEVC. More efficient (better quality per bit); **requires a hardware HEVC encoder** and automatically falls back to `h264` otherwise. Check [`OnSuccess.usedFormat`](#result-types) for the codec actually used. |
 
 ### `Result` types
 
 | Type | Properties | Description |
 |------|-----------|-------------|
-| `OnSuccess` | `destinationPath: String`, `originalSize: int`, `compressedSize: int`, `duration: double`, `ratio: double`, `usedFormat: VideoFormat`, `targetSizeMet: bool` | Output path, byte sizes, duration (seconds), percentage size reduction, the codec actually used, and whether a requested `targetSizeMb` was achievable (`true` when no target was set). |
+| `OnSuccess` | `destinationPath: String`, `originalSize: int`, `compressedSize: int`, `duration: double`, `ratio: double`, `usedFormat: VideoFormat`, `targetSizeMet: bool`, `passesUsed: int` | Output path, byte sizes, duration (seconds), percentage size reduction, the codec actually used, whether a requested `targetSizeMb` was achievable (`true` when no target was set), and how many encoding passes ran (1 or 2). |
 | `OnFailure` | `message: String`, `failureType: CompressionFailureType` | A failure: a human-readable `message` plus a [`CompressionFailureType`](#compressionfailuretype) category for reacting in code without parsing text. |
 | `OnCancelled` | `isCancelled: bool` | Compression was cancelled via `cancelCompression()`. |
 
@@ -597,7 +576,7 @@ The category carried by `OnFailure.failureType`, for reacting to *why* a video f
 
 | Type | Properties | Description |
 |------|-----------|-------------|
-| `BatchProgress` | `index: int`, `percent: double`, `overallPercent: double` | Progress of one video and the batch average. |
+| `BatchProgress` | `index: int`, `percent: double`, `overallPercent: double`, plus `etaMs` / `elapsedMs` / `bytesProcessed` | Progress of one video and the batch average. |
 | `BatchItemCompleted` | `index: int`, `result: Result` | A video finished; `result` is `OnSuccess` / `OnFailure` / `OnCancelled`. |
 
 ### `MediaInfo` (from `getMediaInfo`)
@@ -652,6 +631,7 @@ All extend `LightCompressorException` (catch the base type to handle any):
 | Member | Signature | Description |
 |--------|-----------|-------------|
 | `onProgressUpdated` | `Stream<double>` | Single-video progress, `0`–`100`. |
+| `onProgressDetail` | `Stream<CompressionProgress>` | Single-video progress with ETA, elapsed time and bytes written. |
 | `onBatchUpdate` | `Stream<BatchEvent>` | Per-video + overall progress and completion events during `compressVideos`. |
 | `getMediaInfo()` | `Future<MediaInfo>` | Read video metadata. |
 | `getVideoThumbnail()` | `Future<String>` | Extract a JPEG frame; returns its file path. |
@@ -661,93 +641,49 @@ All extend `LightCompressorException` (catch the base type to handle any):
 | `clearCache()` | `Future<void>` | Delete temporary `.mp4` files created during compression. |
 | `cancelCompression()` | `Future<void>` | Cancel any running compression. |
 
----
+## Testing
 
-## ⚙️ Configuration
+The plugin ships two layers of tests:
 
-### iOS / macOS
-
-**SPM vs CocoaPods** — the plugin includes both `Package.swift` and `.podspec`. Flutter ≥ 3.24 uses SPM by default; older versions fall back to CocoaPods automatically.
-
-**Info.plist** — if you use `IOSConfig(saveInGallery: true)`, add the photo library usage description:
-
-```xml
-<key>NSPhotoLibraryUsageDescription</key>
-<string>Used to save compressed videos.</string>
-```
-
-### Android
-
-**Permissions** — add the appropriate permissions to `AndroidManifest.xml` based on your target API level:
-
-```xml
-<!-- API < 29 -->
-<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-<uses-permission
-    android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-    android:maxSdkVersion="28"
-    tools:ignore="ScopedStorage" />
-
-<!-- API 29–32 -->
-<uses-permission
-    android:name="android.permission.READ_EXTERNAL_STORAGE"
-    android:maxSdkVersion="32" />
-
-<!-- API ≥ 33 -->
-<uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-```
-
-**Background execution** — when you pass a `BackgroundConfig`, no manifest changes are required on your side. The plugin already declares the foreground service and the `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC` and `POST_NOTIFICATIONS` permissions, which merge into your app automatically; the `POST_NOTIFICATIONS` runtime prompt (Android 13+) is requested for you.
-
-**ProGuard** — no special ProGuard or R8 rules are required.
-
----
-
-## 🧪 Testing
-
-The plugin ships with two layers of tests:
-
-- **Unit tests** (`test/`) cover the Dart surface: argument forwarding over the method channel, result/event parsing, batch ordering and failure typing, progress-stream coercion, and the typed-exception mapping. They need no device:
+- **Unit tests** (`test/`) cover the Dart surface — argument forwarding, result/event
+  parsing, batch ordering and failure typing, progress coercion, and typed-exception
+  mapping. No device needed:
 
   ```bash
   flutter test
   ```
 
-- **Integration tests** (`example/integration_test/`) exercise the **real native pipeline** (Android `MediaCodec` / `MediaMuxer`, Apple `AVFoundation`) on a device, emulator, or simulator — metadata, thumbnails, compression options, progress streams, cancellation, batch resilience, and H.264 / H.265 codec selection with automatic fallback:
+- **Integration tests** (`example/integration_test/`) exercise the **real native
+  pipeline** on a device, emulator, or simulator:
 
   ```bash
   cd example
   flutter test integration_test/plugin_integration_test.dart -d <deviceId>
-  flutter test integration_test/hevc_compression_test.dart   -d <deviceId>
   ```
 
-  A short sample clip is bundled at `example/integration_test/assets/sample.mp4`; the tests skip cleanly when it is absent.
+  A short sample clip is bundled at `example/integration_test/assets/sample.mp4`; the
+  tests skip cleanly when it is absent.
 
-`flutter analyze`, formatting, and the unit tests run in [CI](https://github.com/Farid023/light_compressor_v2/actions/workflows/ci.yml) on every push and pull request. Integration tests are run manually, since they need a device.
+`flutter analyze`, formatting, and the unit tests run in
+[CI](https://github.com/Farid023/light_compressor_v2/actions/workflows/ci.yml) on
+every push and pull request; integration tests are run manually, since they need a
+device.
 
----
+## Contributing
 
-## 🤝 Contributing
+Contributions are welcome:
 
-Contributions are welcome! To get started:
+1. Fork [github.com/Farid023/light_compressor_v2](https://github.com/Farid023/light_compressor_v2).
+2. Create a feature branch: `git checkout -b feature/my-feature`.
+3. Make your changes and run the example app to verify (`cd example && flutter run`).
+4. Open a pull request with a clear description.
 
-1. Fork the repository: [github.com/Farid023/light_compressor_v2](https://github.com/Farid023/light_compressor_v2)
-2. Create a feature branch: `git checkout -b feat/my-feature`
-3. Make your changes and **run the example app** to verify:
-   ```bash
-   cd example
-   flutter run
-   ```
-4. Open a Pull Request with a clear description of the change.
+Please report bugs via [GitHub Issues](https://github.com/Farid023/light_compressor_v2/issues),
+including the device name, OS version, and whether the issue reproduces in the
+example app.
 
-Please report bugs via [GitHub Issues](https://github.com/Farid023/light_compressor_v2/issues). Include the device name, OS version, and whether the issue reproduces in the example app.
-
----
-
-## 📄 License
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+## License
 
 Released under the MIT License — see [LICENSE](LICENSE) for the full text.
 
-MIT © 2025 [Farid Gurbanov](https://github.com/Farid023)
+MIT © 2025 [Farid Gurbanov](https://github.com/Farid023) · [gurf.dev](https://gurf.dev)

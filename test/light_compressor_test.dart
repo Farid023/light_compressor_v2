@@ -24,27 +24,27 @@ void main() {
 
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
-            log.add(methodCall);
-            if (platformError != null) {
-              throw platformError!;
-            }
-            switch (methodCall.method) {
-              case 'getMediaInfo':
-                return mediaInfoResponse;
-              case 'getVideoThumbnail':
-                return thumbnailResponse;
-              case 'getVideoThumbnails':
-                return thumbnailsResponse;
-              case 'getCompressionEstimate':
-                return estimateResponse;
-              case 'isCompressing':
-                return isCompressingResponse;
-              case 'startBatchCompression':
-                return batchResponse;
-              default:
-                return mockedResponse;
-            }
-          });
+        log.add(methodCall);
+        if (platformError != null) {
+          throw platformError!;
+        }
+        switch (methodCall.method) {
+          case 'getMediaInfo':
+            return mediaInfoResponse;
+          case 'getVideoThumbnail':
+            return thumbnailResponse;
+          case 'getVideoThumbnails':
+            return thumbnailsResponse;
+          case 'getCompressionEstimate':
+            return estimateResponse;
+          case 'isCompressing':
+            return isCompressingResponse;
+          case 'startBatchCompression':
+            return batchResponse;
+          default:
+            return mockedResponse;
+        }
+      });
     });
 
     tearDown(() {
@@ -834,9 +834,8 @@ void main() {
           () => messenger.setMockStreamHandler(progressChannel, null),
         );
 
-        final List<double> values = await compressor.onProgressUpdated
-            .take(2)
-            .toList();
+        final List<double> values =
+            await compressor.onProgressUpdated.take(2).toList();
         expect(values, <double>[50.0, 0.0]);
       },
     );
@@ -873,9 +872,8 @@ void main() {
       );
       addTearDown(() => messenger.setMockStreamHandler(batchChannel, null));
 
-      final List<BatchEvent> events = await compressor.onBatchUpdate
-          .take(2)
-          .toList();
+      final List<BatchEvent> events =
+          await compressor.onBatchUpdate.take(2).toList();
 
       final BatchProgress first = events[0] as BatchProgress;
       expect(first.index, 1);
@@ -917,9 +915,8 @@ void main() {
         );
         addTearDown(() => messenger.setMockStreamHandler(batchChannel, null));
 
-        final List<BatchEvent> events = await compressor.onBatchUpdate
-            .take(1)
-            .toList();
+        final List<BatchEvent> events =
+            await compressor.onBatchUpdate.take(1).toList();
 
         final BatchItemCompleted completed = events[0] as BatchItemCompleted;
         expect(completed.index, 0);
@@ -1033,9 +1030,9 @@ void main() {
 
         final paths = await compressor
             .getVideoThumbnails('/path/to/input.mp4', const <ThumbnailRequest>[
-              ThumbnailRequest(positionInMs: 0, quality: 80),
-              ThumbnailRequest(positionInMs: 5000),
-            ]);
+          ThumbnailRequest(positionInMs: 0, quality: 80),
+          ThumbnailRequest(positionInMs: 5000),
+        ]);
 
         expect(paths, <String>['/cache/t0.jpg', '/cache/t1.jpg']);
         expect(log.last.method, 'getVideoThumbnails');
