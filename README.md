@@ -17,7 +17,12 @@ media info, a pre-flight size estimate, live progress with ETA, cancellation, an
 optional background execution — MIT-licensed, with zero third-party dependencies.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Farid023/light_compressor_v2/master/pictures/demo.gif" alt="Demo" width="320" />
+  <img src="https://raw.githubusercontent.com/Farid023/light_compressor_v2/master/pictures/single.gif" alt="Single-video compression" width="300" />
+  &nbsp;&nbsp;&nbsp;
+  <img src="https://raw.githubusercontent.com/Farid023/light_compressor_v2/master/pictures/batch.gif" alt="Batch compression" width="300" />
+</p>
+<p align="center">
+  <em>Single-video flow (left) &nbsp;·&nbsp; batch with per-item and overall progress (right)</em>
 </p>
 
 ## Contents
