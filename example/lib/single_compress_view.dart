@@ -1,11 +1,14 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:light_compressor_v2/light_compressor_v2.dart';
 
+import 'theme.dart';
 import 'utils/file_utils.dart';
 import 'video_player.dart';
+import 'widgets.dart';
 
 /// Stage of the single-video flow.
 enum _Stage { idle, ready, compressing, done, failed }
@@ -34,9 +37,14 @@ class _SingleCompressViewState extends State<SingleCompressView>
   bool _thumbsLoading = false;
   OnSuccess? _result;
   String? _error;
+
+  // Basic options.
+  VideoQuality _quality = VideoQuality.medium;
+  VideoFormat _videoFormat = VideoFormat.h264;
+
+  // Advanced options.
   bool _runInBackground = false;
   bool _twoPass = false;
-  VideoFormat _videoFormat = VideoFormat.h264;
   int _rotation = 0;
   double _brightness = 0; // -1..1, 0 = none
   double _contrast = 1; // 0..2, 1 = none
@@ -46,6 +54,8 @@ class _SingleCompressViewState extends State<SingleCompressView>
   final TextEditingController _audioKbpsController = TextEditingController();
   final TextEditingController _trimStartController = TextEditingController();
   final TextEditingController _trimEndController = TextEditingController();
+
+  bool get _isBusy => _stage == _Stage.compressing;
 
   @override
   void dispose() {
@@ -58,8 +68,9 @@ class _SingleCompressViewState extends State<SingleCompressView>
   }
 
   Future<void> _pickVideo() async {
-    final result = await FilePicker.platform.pickFiles(type: FileType.video);
-    final path = result?.files.first.path;
+    final FilePickerResult? result =
+        await FilePicker.platform.pickFiles(type: FileType.video);
+    final String? path = result?.files.first.path;
     if (path == null) return;
 
     _targetSizeController.clear();
@@ -85,16 +96,18 @@ class _SingleCompressViewState extends State<SingleCompressView>
     // Read metadata, grab a preview frame from the middle of the video, and
     // predict the compressed size (getCompressionEstimate runs no transcode).
     try {
-      final info = await widget.compressor.getMediaInfo(path);
-      final midpointMs = (info.duration ?? Duration.zero).inMilliseconds ~/ 2;
-      final thumbnail = await widget.compressor.getVideoThumbnail(
+      final MediaInfo info = await widget.compressor.getMediaInfo(path);
+      final int midpointMs =
+          (info.duration ?? Duration.zero).inMilliseconds ~/ 2;
+      final String thumbnail = await widget.compressor.getVideoThumbnail(
         path,
         positionInMs: midpointMs,
         quality: 80,
       );
-      final estimate = await widget.compressor.getCompressionEstimate(
+      final CompressionEstimate estimate =
+          await widget.compressor.getCompressionEstimate(
         path,
-        videoQuality: VideoQuality.medium,
+        videoQuality: _quality,
       );
       if (!mounted) return;
       setState(() {
@@ -107,15 +120,34 @@ class _SingleCompressViewState extends State<SingleCompressView>
     }
   }
 
+  /// Re-runs the pre-flight estimate when the quality changes, so the
+  /// "estimated output" card stays in sync with the selected preset.
+  Future<void> _refreshEstimate() async {
+    final String? path = _sourcePath;
+    if (path == null) return;
+    try {
+      final CompressionEstimate estimate =
+          await widget.compressor.getCompressionEstimate(
+        path,
+        videoQuality: _quality,
+        videoFormat: _videoFormat,
+      );
+      if (!mounted) return;
+      setState(() => _estimate = estimate);
+    } catch (e) {
+      debugPrint('Estimate refresh failed: $e');
+    }
+  }
+
   /// Generates a strip of evenly-spaced thumbnails via [getVideoThumbnails]
   /// (one native round-trip).
   Future<void> _loadThumbnails() async {
-    final path = _sourcePath;
+    final String? path = _sourcePath;
     if (path == null) return;
     setState(() => _thumbsLoading = true);
 
-    final totalMs = (_info?.duration ?? Duration.zero).inMilliseconds;
-    final requests = <ThumbnailRequest>[
+    final int totalMs = (_info?.duration ?? Duration.zero).inMilliseconds;
+    final List<ThumbnailRequest> requests = <ThumbnailRequest>[
       for (int i = 0; i < 5; i++)
         ThumbnailRequest(
           positionInMs: totalMs > 0 ? (totalMs * i) ~/ 5 : 0,
@@ -123,7 +155,8 @@ class _SingleCompressViewState extends State<SingleCompressView>
         ),
     ];
     try {
-      final paths = await widget.compressor.getVideoThumbnails(path, requests);
+      final List<String> paths =
+          await widget.compressor.getVideoThumbnails(path, requests);
       if (!mounted) return;
       setState(() {
         _thumbnails = paths;
@@ -137,7 +170,7 @@ class _SingleCompressViewState extends State<SingleCompressView>
   }
 
   Future<void> _compress() async {
-    final path = _sourcePath;
+    final String? path = _sourcePath;
     if (path == null) return;
 
     setState(() {
@@ -145,27 +178,29 @@ class _SingleCompressViewState extends State<SingleCompressView>
       _error = null;
     });
 
-    final videoName = 'LC-${DateTime.now().millisecondsSinceEpoch}.mp4';
-    final parsedTarget = int.tryParse(_targetSizeController.text.trim());
-    final targetSizeMb =
+    final String videoName = 'LC-${DateTime.now().millisecondsSinceEpoch}.mp4';
+    final int? parsedTarget = int.tryParse(_targetSizeController.text.trim());
+    final int? targetSizeMb =
         (parsedTarget != null && parsedTarget > 0) ? parsedTarget : null;
-    final parsedFps = int.tryParse(_fpsController.text.trim());
-    final videoFps = (parsedFps != null && parsedFps > 0) ? parsedFps : null;
-    final parsedAudioKbps = int.tryParse(_audioKbpsController.text.trim());
-    final audio = (parsedAudioKbps != null && parsedAudioKbps > 0)
+    final int? parsedFps = int.tryParse(_fpsController.text.trim());
+    final int? videoFps =
+        (parsedFps != null && parsedFps > 0) ? parsedFps : null;
+    final int? parsedAudioKbps = int.tryParse(_audioKbpsController.text.trim());
+    final AudioConfig? audio = (parsedAudioKbps != null && parsedAudioKbps > 0)
         ? AudioConfig(bitrate: parsedAudioKbps * 1000)
         : null;
-    final parsedTrimStart = int.tryParse(_trimStartController.text.trim());
-    final parsedTrimEnd = int.tryParse(_trimEndController.text.trim());
-    final trimStartMs = (parsedTrimStart != null && parsedTrimStart > 0)
+    final int? parsedTrimStart = int.tryParse(_trimStartController.text.trim());
+    final int? parsedTrimEnd = int.tryParse(_trimEndController.text.trim());
+    final int? trimStartMs = (parsedTrimStart != null && parsedTrimStart > 0)
         ? parsedTrimStart
         : null;
-    final trimEndMs =
+    final int? trimEndMs =
         (parsedTrimEnd != null && parsedTrimEnd > (trimStartMs ?? 0))
             ? parsedTrimEnd
             : null;
-    final hasColor = _brightness != 0 || _contrast != 1 || _saturation != 1;
-    final edit =
+    final bool hasColor =
+        _brightness != 0 || _contrast != 1 || _saturation != 1;
+    final VideoEdit? edit =
         (trimStartMs != null || trimEndMs != null || _rotation != 0 || hasColor)
             ? VideoEdit(
                 trimStartMs: trimStartMs,
@@ -177,9 +212,9 @@ class _SingleCompressViewState extends State<SingleCompressView>
               )
             : null;
     try {
-      final result = await widget.compressor.compressVideo(
+      final Result result = await widget.compressor.compressVideo(
         path: path,
-        videoQuality: VideoQuality.medium,
+        videoQuality: _quality,
         isMinBitrateCheckEnabled: false,
         video: Video(
           videoName: videoName,
@@ -223,225 +258,112 @@ class _SingleCompressViewState extends State<SingleCompressView>
     }
   }
 
-  Widget _colorSlider(
-    String label,
-    double value,
-    double min,
-    double max,
-    ValueChanged<double> onChanged,
-  ) =>
-      Row(
-        children: [
-          SizedBox(
-            width: 78,
-            child: Text(label, style: const TextStyle(fontSize: 13)),
-          ),
-          Expanded(
-            child: Slider(
-              value: value,
-              min: min,
-              max: max,
-              onChanged: _stage == _Stage.compressing ? null : onChanged,
-            ),
-          ),
-          SizedBox(
-            width: 34,
-            child: Text(
-              value.toStringAsFixed(1),
-              style: const TextStyle(fontSize: 12, color: Colors.black54),
-            ),
-          ),
-        ],
-      );
-
   @override
   bool get wantKeepAlive => true;
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        FilledButton.icon(
-          onPressed: _stage == _Stage.compressing ? null : _pickVideo,
-          icon: const Icon(Icons.video_call_outlined),
-          label: const Text('Pick a video'),
-        ),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Run in background'),
-          subtitle: const Text(
-            'Keep compressing when the app is backgrounded or the screen is off',
-          ),
-          value: _runInBackground,
-          onChanged: _stage == _Stage.compressing
-              ? null
-              : (value) => setState(() => _runInBackground = value),
-        ),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Use H.265 (HEVC)'),
-          subtitle: const Text(
-            'Smaller files where supported; falls back to H.264 otherwise',
-          ),
-          value: _videoFormat == VideoFormat.h265,
-          onChanged: _stage == _Stage.compressing
-              ? null
-              : (value) => setState(
-                    () => _videoFormat =
-                        value ? VideoFormat.h265 : VideoFormat.h264,
-                  ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: TextField(
-            controller: _targetSizeController,
-            enabled: _stage != _Stage.compressing,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Max output size (MB) — optional',
-              helperText:
-                  'Compress to about this size; blank uses medium quality',
-              isDense: true,
+    if (_stage == _Stage.idle) {
+      return EmptyState(
+        icon: Icons.movie_creation_outlined,
+        title: 'No video selected',
+        message: 'Pick a video to inspect its metadata and compress it '
+            'with native codecs.',
+        buttonLabel: 'Pick a video',
+        buttonIcon: Icons.video_call_outlined,
+        onPressed: _pickVideo,
+      );
+    }
+
+    return Column(
+      children: <Widget>[
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.lg,
+              AppSpacing.lg,
+              AppSpacing.lg,
+              AppSpacing.md,
             ),
-          ),
-        ),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Two-pass (precise size)'),
-          subtitle: const Text(
-            'Re-encode once more if the first pass overshoots the max size '
-            '(needs a max size; about doubles the time)',
-          ),
-          value: _twoPass,
-          onChanged: _stage == _Stage.compressing
-              ? null
-              : (value) => setState(() => _twoPass = value),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: TextField(
-            controller: _fpsController,
-            enabled: _stage != _Stage.compressing,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Output FPS — optional',
-              helperText:
-                  'Downsample to about this rate; blank keeps the source',
-              isDense: true,
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: TextField(
-            controller: _audioKbpsController,
-            enabled: _stage != _Stage.compressing,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Audio bitrate (kbps) — optional',
-              helperText:
-                  'Re-encode AAC at this bitrate; blank copies the source',
-              isDense: true,
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _trimStartController,
-                  enabled: _stage != _Stage.compressing,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Trim start (ms)',
-                    helperText: 'Optional',
-                    isDense: true,
+            children: <Widget>[
+              _PreviewCard(info: _info, thumbnailPath: _thumbnailPath),
+              if (_estimate != null) ...<Widget>[
+                const SizedBox(height: AppSpacing.md),
+                _EstimateCard(estimate: _estimate!),
+              ],
+              const SizedBox(height: AppSpacing.md),
+              _ThumbnailStrip(
+                thumbnails: _thumbnails,
+                loading: _thumbsLoading,
+                onGenerate: _isBusy ? null : _loadThumbnails,
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.lg),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      QualitySelector(
+                        value: _quality,
+                        onChanged: _isBusy
+                            ? null
+                            : (VideoQuality v) {
+                                setState(() => _quality = v);
+                                unawaited(_refreshEstimate());
+                              },
+                      ),
+                      const SizedBox(height: AppSpacing.lg),
+                      CodecSelector(
+                        value: _videoFormat,
+                        onChanged: _isBusy
+                            ? null
+                            : (VideoFormat v) {
+                                setState(() => _videoFormat = v);
+                                unawaited(_refreshEstimate());
+                              },
+                      ),
+                    ],
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextField(
-                  controller: _trimEndController,
-                  enabled: _stage != _Stage.compressing,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Trim end (ms)',
-                    helperText: 'Optional',
-                    isDense: true,
-                  ),
-                ),
+              const SizedBox(height: AppSpacing.md),
+              _AdvancedOptions(
+                enabled: !_isBusy,
+                runInBackground: _runInBackground,
+                onRunInBackgroundChanged: (bool v) =>
+                    setState(() => _runInBackground = v),
+                twoPass: _twoPass,
+                onTwoPassChanged: (bool v) => setState(() => _twoPass = v),
+                targetSizeController: _targetSizeController,
+                fpsController: _fpsController,
+                audioKbpsController: _audioKbpsController,
+                trimStartController: _trimStartController,
+                trimEndController: _trimEndController,
+                rotation: _rotation,
+                onRotationChanged: (int v) => setState(() => _rotation = v),
+                brightness: _brightness,
+                onBrightnessChanged: (double v) =>
+                    setState(() => _brightness = v),
+                contrast: _contrast,
+                onContrastChanged: (double v) => setState(() => _contrast = v),
+                saturation: _saturation,
+                onSaturationChanged: (double v) =>
+                    setState(() => _saturation = v),
               ),
+              const SizedBox(height: AppSpacing.lg),
+              ..._buildStage(context),
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.only(top: 12),
-          child: Row(
-            children: [
-              const Text('Rotate'),
-              const SizedBox(width: 12),
-              Expanded(
-                child: SegmentedButton<int>(
-                  showSelectedIcon: false,
-                  segments: const [
-                    ButtonSegment(value: 0, label: Text('0°')),
-                    ButtonSegment(value: 90, label: Text('90°')),
-                    ButtonSegment(value: 180, label: Text('180°')),
-                    ButtonSegment(value: 270, label: Text('270°')),
-                  ],
-                  selected: {_rotation},
-                  onSelectionChanged: _stage == _Stage.compressing
-                      ? null
-                      : (Set<int> s) => setState(() => _rotation = s.first),
-                ),
-              ),
-            ],
-          ),
+        _BottomActionBar(
+          stage: _stage,
+          onPick: _pickVideo,
+          onCompress: _compress,
+          onCancel: widget.compressor.cancelCompression,
+          progressStream: widget.compressor.onProgressDetail,
         ),
-        _colorSlider(
-          'Brightness',
-          _brightness,
-          -1,
-          1,
-          (double v) => setState(() => _brightness = v),
-        ),
-        _colorSlider(
-          'Contrast',
-          _contrast,
-          0,
-          2,
-          (double v) => setState(() => _contrast = v),
-        ),
-        _colorSlider(
-          'Saturation',
-          _saturation,
-          0,
-          2,
-          (double v) => setState(() => _saturation = v),
-        ),
-        if (_info != null || _thumbnailPath != null) ...[
-          const SizedBox(height: 16),
-          _PreviewCard(info: _info, thumbnailPath: _thumbnailPath),
-        ],
-        if (_estimate != null) ...[
-          const SizedBox(height: 12),
-          _EstimateCard(estimate: _estimate!),
-        ],
-        if (_sourcePath != null) ...[
-          const SizedBox(height: 12),
-          _ThumbnailStrip(
-            thumbnails: _thumbnails,
-            loading: _thumbsLoading,
-            onGenerate: _stage == _Stage.compressing ? null : _loadThumbnails,
-          ),
-        ],
-        const SizedBox(height: 16),
-        ..._buildStage(context),
       ],
     );
   }
@@ -449,95 +371,325 @@ class _SingleCompressViewState extends State<SingleCompressView>
   List<Widget> _buildStage(BuildContext context) {
     switch (_stage) {
       case _Stage.idle:
-        return const [
-          _Hint('Pick a video to inspect and compress it.'),
-        ];
       case _Stage.ready:
-        return [
-          FilledButton.tonalIcon(
-            onPressed: _compress,
-            icon: const Icon(Icons.compress),
-            label: const Text('Compress'),
-          ),
-        ];
+        return const <Widget>[];
       case _Stage.compressing:
-        return [
-          _buildProgress(),
-          const SizedBox(height: 16),
-          Center(
-            child: OutlinedButton.icon(
-              onPressed: widget.compressor.cancelCompression,
-              icon: const Icon(Icons.close),
-              label: const Text('Cancel'),
-            ),
-          ),
-        ];
+        // Progress is shown in the pinned bottom bar (always visible), so the
+        // scrollable body shows nothing extra while compressing.
+        return const <Widget>[];
       case _Stage.done:
-        return [_ResultCard(result: _result!)];
+        return <Widget>[_ResultCard(result: _result!)];
       case _Stage.failed:
-        return [
-          _Hint(_error ?? 'Compression failed', isError: true),
-        ];
+        return <Widget>[_ErrorCard(message: _error ?? 'Compression failed')];
     }
   }
+}
 
-  Widget _buildProgress() => StreamBuilder<CompressionProgress>(
-        stream: widget.compressor.onProgressDetail,
-        builder: (context, snapshot) {
-          final CompressionProgress? detail = snapshot.data;
-          final double progress = detail?.percent ?? 0;
-          return Center(
-            child: Column(
-              children: [
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: 132,
-                  height: 132,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      CircularProgressIndicator(
-                        value: progress > 0 ? progress / 100 : null,
-                        strokeWidth: 9,
-                        strokeCap: StrokeCap.round,
-                        backgroundColor: Colors.black12,
-                      ),
-                      Center(
-                        child: Text(
-                          '${progress.toStringAsFixed(0)}%',
-                          style: const TextStyle(
-                            fontSize: 26,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
+/// The bottom-pinned action area: "Compress" while ready, or a compact live
+/// progress row (bar + label + small Cancel) while compressing — always
+/// visible, so progress never requires scrolling.
+class _BottomActionBar extends StatelessWidget {
+  const _BottomActionBar({
+    required this.stage,
+    required this.onPick,
+    required this.onCompress,
+    required this.onCancel,
+    required this.progressStream,
+  });
+
+  final _Stage stage;
+  final VoidCallback onPick;
+  final VoidCallback onCompress;
+  final VoidCallback onCancel;
+  final Stream<CompressionProgress> progressStream;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.lg,
+          AppSpacing.md,
+          AppSpacing.lg,
+          AppSpacing.md,
+        ),
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          border: Border(top: BorderSide(color: scheme.outlineVariant)),
+        ),
+        child: stage == _Stage.compressing
+            ? _CompressingBar(stream: progressStream, onCancel: onCancel)
+            : Row(
+                children: <Widget>[
+                  IconButton.filledTonal(
+                    onPressed: onPick,
+                    icon: const Icon(Icons.video_call_outlined),
+                    tooltip: 'Pick another video',
                   ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  _progressLabel(detail),
-                  style: const TextStyle(fontSize: 14, color: Colors.black54),
-                ),
-              ],
-            ),
-          );
-        },
-      );
-
-  /// Builds the under-the-dial label: estimated time remaining and live output
-  /// size when the platform reports them, otherwise a plain "Compressing…".
-  String _progressLabel(CompressionProgress? detail) {
-    if (detail == null) return 'Compressing…';
-    final List<String> parts = <String>[];
-    if (detail.etaMs != null) {
-      parts.add('~${(detail.etaMs! / 1000).ceil()}s left');
-    }
-    if ((detail.bytesProcessed ?? 0) > 0) {
-      parts.add(formatBytes(detail.bytesProcessed!, 1));
-    }
-    return parts.isEmpty ? 'Compressing…' : parts.join(' • ');
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: onCompress,
+                      icon: const Icon(Icons.compress),
+                      label: const Text('Compress'),
+                    ),
+                  ),
+                ],
+              ),
+      ),
+    );
   }
+}
+
+/// A compact live-progress row for the bottom bar: percent + ETA/bytes over a
+/// slim linear bar, with a small Cancel button.
+class _CompressingBar extends StatelessWidget {
+  const _CompressingBar({required this.stream, required this.onCancel});
+
+  final Stream<CompressionProgress> stream;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return StreamBuilder<CompressionProgress>(
+      stream: stream,
+      builder: (
+        BuildContext context,
+        AsyncSnapshot<CompressionProgress> snapshot,
+      ) {
+        final CompressionProgress? detail = snapshot.data;
+        final double progress = detail?.percent ?? 0;
+        final String extra = _progressExtra(detail);
+        return Row(
+          children: <Widget>[
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    extra.isEmpty
+                        ? '${progress.toStringAsFixed(0)}%'
+                        : '${progress.toStringAsFixed(0)}%  •  $extra',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: LinearProgressIndicator(
+                      value: progress > 0 ? progress / 100 : null,
+                      minHeight: 6,
+                      backgroundColor: scheme.surfaceContainerHighest,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            IconButton.outlined(
+              onPressed: onCancel,
+              icon: const Icon(Icons.close),
+              tooltip: 'Cancel',
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Formats the live ETA + output size for the progress label (empty when the
+/// platform hasn't reported either yet).
+String _progressExtra(CompressionProgress? detail) {
+  if (detail == null) return '';
+  final List<String> parts = <String>[];
+  if (detail.etaMs != null) {
+    parts.add('~${(detail.etaMs! / 1000).ceil()}s left');
+  }
+  if ((detail.bytesProcessed ?? 0) > 0) {
+    parts.add(formatBytes(detail.bytesProcessed!, 1));
+  }
+  return parts.join(' • ');
+}
+
+/// The collapsible "Advanced options" section: target size + two-pass, output
+/// fps, audio bitrate, trim range, rotation and colour adjustments, plus the
+/// background-execution switch.
+class _AdvancedOptions extends StatelessWidget {
+  const _AdvancedOptions({
+    required this.enabled,
+    required this.runInBackground,
+    required this.onRunInBackgroundChanged,
+    required this.twoPass,
+    required this.onTwoPassChanged,
+    required this.targetSizeController,
+    required this.fpsController,
+    required this.audioKbpsController,
+    required this.trimStartController,
+    required this.trimEndController,
+    required this.rotation,
+    required this.onRotationChanged,
+    required this.brightness,
+    required this.onBrightnessChanged,
+    required this.contrast,
+    required this.onContrastChanged,
+    required this.saturation,
+    required this.onSaturationChanged,
+  });
+
+  final bool enabled;
+  final bool runInBackground;
+  final ValueChanged<bool> onRunInBackgroundChanged;
+  final bool twoPass;
+  final ValueChanged<bool> onTwoPassChanged;
+  final TextEditingController targetSizeController;
+  final TextEditingController fpsController;
+  final TextEditingController audioKbpsController;
+  final TextEditingController trimStartController;
+  final TextEditingController trimEndController;
+  final int rotation;
+  final ValueChanged<int> onRotationChanged;
+  final double brightness;
+  final ValueChanged<double> onBrightnessChanged;
+  final double contrast;
+  final ValueChanged<double> onContrastChanged;
+  final double saturation;
+  final ValueChanged<double> onSaturationChanged;
+
+  @override
+  Widget build(BuildContext context) => Card(
+        clipBehavior: Clip.antiAlias,
+        child: Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            tilePadding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+            childrenPadding: const EdgeInsets.fromLTRB(
+              AppSpacing.lg,
+              AppSpacing.lg,
+              AppSpacing.lg,
+              AppSpacing.lg,
+            ),
+            title: const Text('Advanced options'),
+            subtitle: const Text(
+              'Target size, FPS, audio, trim, rotate, colour, background',
+            ),
+            children: <Widget>[
+              NumberField(
+                controller: targetSizeController,
+                enabled: enabled,
+                label: 'Max output size',
+                suffixText: 'MB',
+                helperText: 'Optional — blank uses the selected quality',
+              ),
+              const SizedBox(height: AppSpacing.md),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Two-pass (precise size)'),
+                subtitle: const Text(
+                  'Re-encode once more if pass 1 overshoots the max size '
+                  '(needs a max size; about doubles the time)',
+                ),
+                value: twoPass,
+                onChanged: enabled ? onTwoPassChanged : null,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              NumberField(
+                controller: fpsController,
+                enabled: enabled,
+                label: 'Output frame rate',
+                suffixText: 'fps',
+                helperText: 'Optional — downsample only',
+              ),
+              const SizedBox(height: AppSpacing.md),
+              NumberField(
+                controller: audioKbpsController,
+                enabled: enabled,
+                label: 'Audio bitrate',
+                suffixText: 'kbps',
+                helperText: 'Optional — AAC re-encode',
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: NumberField(
+                      controller: trimStartController,
+                      enabled: enabled,
+                      label: 'Trim start (ms)',
+                      helperText: 'Optional',
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: NumberField(
+                      controller: trimEndController,
+                      enabled: enabled,
+                      label: 'Trim end (ms)',
+                      helperText: 'Optional',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              const SectionHeader('Rotate'),
+              const SizedBox(height: AppSpacing.sm),
+              SegmentedButton<int>(
+                showSelectedIcon: false,
+                segments: const <ButtonSegment<int>>[
+                  ButtonSegment<int>(value: 0, label: Text('0°')),
+                  ButtonSegment<int>(value: 90, label: Text('90°')),
+                  ButtonSegment<int>(value: 180, label: Text('180°')),
+                  ButtonSegment<int>(value: 270, label: Text('270°')),
+                ],
+                selected: <int>{rotation},
+                onSelectionChanged:
+                    enabled ? (Set<int> s) => onRotationChanged(s.first) : null,
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              const SectionHeader('Colour adjust'),
+              const SizedBox(height: AppSpacing.sm),
+              LabeledSlider(
+                label: 'Brightness',
+                value: brightness,
+                min: -1,
+                max: 1,
+                onChanged: enabled ? onBrightnessChanged : null,
+              ),
+              LabeledSlider(
+                label: 'Contrast',
+                value: contrast,
+                min: 0,
+                max: 2,
+                onChanged: enabled ? onContrastChanged : null,
+              ),
+              LabeledSlider(
+                label: 'Saturation',
+                value: saturation,
+                min: 0,
+                max: 2,
+                onChanged: enabled ? onSaturationChanged : null,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Run in background'),
+                subtitle: const Text(
+                  'Keep compressing when the app is backgrounded or the '
+                  'screen is off',
+                ),
+                value: runInBackground,
+                onChanged: enabled ? onRunInBackgroundChanged : null,
+              ),
+            ],
+          ),
+        ),
+      );
 }
 
 /// Shows the picked video's thumbnail and metadata.
@@ -551,24 +703,64 @@ class _PreviewCard extends StatelessWidget {
   Widget build(BuildContext context) => Card(
         clipBehavior: Clip.antiAlias,
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(AppSpacing.md),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (thumbnailPath != null)
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.file(
-                    File(thumbnailPath!),
-                    width: 130,
-                    height: 86,
-                    fit: BoxFit.cover,
-                  ),
-                ),
-              const SizedBox(width: 12),
+            children: <Widget>[
+              _Thumbnail(path: thumbnailPath, width: 130, height: 86),
+              const SizedBox(width: AppSpacing.md),
               if (info != null) Expanded(child: _Metadata(info: info!)),
             ],
           ),
+        ),
+      );
+}
+
+/// A thumbnail image with a themed placeholder, error, and loading builder.
+class _Thumbnail extends StatelessWidget {
+  const _Thumbnail({
+    required this.path,
+    required this.width,
+    required this.height,
+    this.borderRadius = 8,
+  });
+
+  final String? path;
+  final double width;
+  final double height;
+  final double borderRadius;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final String? currentPath = path;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(borderRadius),
+      child: currentPath == null
+          ? _placeholder(scheme)
+          : Image.file(
+              File(currentPath),
+              width: width,
+              height: height,
+              fit: BoxFit.cover,
+              errorBuilder: (
+                BuildContext context,
+                Object error,
+                StackTrace? stackTrace,
+              ) =>
+                  _placeholder(scheme),
+            ),
+    );
+  }
+
+  Widget _placeholder(ColorScheme scheme) => Container(
+        width: width,
+        height: height,
+        color: scheme.surfaceContainerHighest,
+        child: Icon(
+          Icons.movie_outlined,
+          size: 20,
+          color: scheme.onSurfaceVariant,
         ),
       );
 }
@@ -581,52 +773,30 @@ class _Metadata extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final resolution = (info.displayWidth != null && info.displayHeight != null)
-        ? '${info.displayWidth} × ${info.displayHeight}'
-        : '—';
-    final duration =
+    final String resolution =
+        (info.displayWidth != null && info.displayHeight != null)
+            ? '${info.displayWidth} × ${info.displayHeight}'
+            : '—';
+    final String duration =
         info.duration != null ? formatDuration(info.duration!) : '—';
-    final bitrate = info.bitrate != null
+    final String bitrate = info.bitrate != null
         ? '${(info.bitrate! / 1000000).toStringAsFixed(2)} Mbps'
         : '—';
-    final size = info.fileSize != null ? formatBytes(info.fileSize!, 2) : '—';
+    final String size =
+        info.fileSize != null ? formatBytes(info.fileSize!, 2) : '—';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _row('Resolution', resolution),
-        _row('Duration', duration),
-        _row('Bitrate', bitrate),
-        _row('Size', size),
+      children: <Widget>[
+        StatRow('Resolution', resolution),
+        StatRow('Duration', duration),
+        StatRow('Bitrate', bitrate),
+        StatRow('Size', size),
         if (info.rotation != null && info.rotation != 0)
-          _row('Rotation', '${info.rotation}°'),
+          StatRow('Rotation', '${info.rotation}°'),
       ],
     );
   }
-
-  Widget _row(String label, String value) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 86,
-              child: Text(
-                label,
-                style: const TextStyle(color: Colors.black54, fontSize: 13),
-              ),
-            ),
-            Expanded(
-              child: Text(
-                value,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
 }
 
 /// Shows compression statistics and a play button.
@@ -636,60 +806,125 @@ class _ResultCard extends StatelessWidget {
   final OnSuccess result;
 
   @override
-  Widget build(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.check_circle, color: Colors.green.shade600),
-                  const SizedBox(width: 8),
-                  const Text(
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Icon(Icons.check_circle, color: scheme.primary),
+                const SizedBox(width: AppSpacing.sm),
+                Text('Compressed',
+                    style: Theme.of(context).textTheme.titleMedium),
+                const Spacer(),
+                ReductionBadge(ratio: result.ratio),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child:
+                      StatRow('Original', formatBytes(result.originalSize, 2)),
+                ),
+                Icon(Icons.arrow_right_alt, color: scheme.onSurfaceVariant),
+                Expanded(
+                  child: StatRow(
                     'Compressed',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    formatBytes(result.compressedSize, 2),
                   ),
-                ],
+                ),
+              ],
+            ),
+            StatRow(
+              'Codec',
+              result.usedFormat == VideoFormat.h265
+                  ? 'H.265 (HEVC)'
+                  : 'H.264 (AVC)',
+            ),
+            StatRow(
+              'Duration',
+              formatDuration(
+                Duration(milliseconds: (result.duration * 1000).round()),
               ),
-              const SizedBox(height: 12),
-              Text('Original: ${formatBytes(result.originalSize, 2)}'),
-              Text('Compressed: ${formatBytes(result.compressedSize, 2)}'),
-              Text('Reduction: ${result.ratio.toStringAsFixed(1)}%'),
-              Text(
-                'Codec: ${result.usedFormat == VideoFormat.h265 ? 'H.265 (HEVC)' : 'H.264 (AVC)'}',
-              ),
-              Text(
-                'Duration: ${formatDuration(Duration(milliseconds: (result.duration * 1000).round()))}',
-              ),
-              if (result.passesUsed > 1)
-                Text('Encoded in ${result.passesUsed} passes'),
-              if (!result.targetSizeMet)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    'Target size could not be met — used the resolution floor.',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.orange.shade800,
+            ),
+            if (result.passesUsed > 1)
+              StatRow('Passes', '${result.passesUsed}'),
+            if (!result.targetSizeMet)
+              Padding(
+                padding: const EdgeInsets.only(top: AppSpacing.sm),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Icon(Icons.warning_amber_rounded,
+                        size: 18, color: scheme.error),
+                    const SizedBox(width: AppSpacing.xs),
+                    Expanded(
+                      child: Text(
+                        'Target size could not be met — used the bitrate floor.',
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: scheme.error),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) =>
-                        VideoPlayerScreen(path: result.destinationPath),
-                  ),
-                ),
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Play'),
               ),
-            ],
-          ),
+            const SizedBox(height: AppSpacing.md),
+            FilledButton.tonalIcon(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (BuildContext context) =>
+                      VideoPlayerScreen(path: result.destinationPath),
+                ),
+              ),
+              icon: const Icon(Icons.play_arrow),
+              label: const Text('Play'),
+            ),
+          ],
         ),
-      );
+      ),
+    );
+  }
+}
+
+/// Shows an error message for a failed compression.
+class _ErrorCard extends StatelessWidget {
+  const _ErrorCard({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Card(
+      color: scheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Icon(Icons.error_outline, color: scheme.onErrorContainer),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Text(
+                message,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(color: scheme.onErrorContainer),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// Shows the pre-flight [CompressionEstimate] (predicted, no transcode).
@@ -699,43 +934,52 @@ class _EstimateCard extends StatelessWidget {
   final CompressionEstimate estimate;
 
   @override
-  Widget build(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Row(
-                children: [
-                  Icon(Icons.calculate_outlined),
-                  SizedBox(width: 8),
-                  Text(
-                    'Estimated output',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Predicted size: ${formatBytes(estimate.estimatedSizeBytes, 2)}',
-              ),
-              Text(
-                'Resolution: ${estimate.outputWidth} × ${estimate.outputHeight}',
-              ),
-              Text(
-                'Bitrate: ${(estimate.targetBitrate / 1000000).toStringAsFixed(2)} Mbps',
-              ),
-              Text(
-                  'Reduction: ~${estimate.estimatedRatio.toStringAsFixed(0)}%'),
-              const SizedBox(height: 4),
-              const Text(
-                'Approximate — computed without transcoding (medium quality).',
-                style: TextStyle(fontSize: 12, color: Colors.black54),
-              ),
-            ],
-          ),
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                Icon(Icons.calculate_outlined, color: scheme.primary),
+                const SizedBox(width: AppSpacing.sm),
+                Text('Estimated output',
+                    style: Theme.of(context).textTheme.titleSmall),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            StatRow(
+              'Predicted size',
+              formatBytes(estimate.estimatedSizeBytes, 2),
+            ),
+            StatRow(
+              'Resolution',
+              '${estimate.outputWidth} × ${estimate.outputHeight}',
+            ),
+            StatRow(
+              'Bitrate',
+              '${(estimate.targetBitrate / 1000000).toStringAsFixed(2)} Mbps',
+            ),
+            StatRow(
+              'Reduction',
+              '~${estimate.estimatedRatio.toStringAsFixed(0)}%',
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              'Approximate — computed without transcoding.',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+          ],
         ),
-      );
+      ),
+    );
+  }
 }
 
 /// A "Generate" button plus the resulting horizontal filmstrip, demonstrating
@@ -752,78 +996,58 @@ class _ThumbnailStrip extends StatelessWidget {
   final VoidCallback? onGenerate;
 
   @override
-  Widget build(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Thumbnails',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  TextButton.icon(
-                    onPressed: loading ? null : onGenerate,
-                    icon: const Icon(Icons.burst_mode_outlined, size: 18),
-                    label: const Text('Generate'),
-                  ),
-                ],
-              ),
-              if (loading)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 16),
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else if (thumbnails.isEmpty)
-                const Text(
-                  'Extract several frames in one call (getVideoThumbnails).',
-                  style: TextStyle(fontSize: 13, color: Colors.black54),
-                )
-              else
-                SizedBox(
-                  height: 72,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: thumbnails.length,
-                    separatorBuilder: (BuildContext context, int index) =>
-                        const SizedBox(width: 8),
-                    itemBuilder: (BuildContext context, int index) => ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: Image.file(
-                        File(thumbnails[index]),
-                        width: 108,
-                        height: 72,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: <Widget>[
+                Text('Thumbnails',
+                    style: Theme.of(context).textTheme.titleSmall),
+                TextButton.icon(
+                  onPressed: loading ? null : onGenerate,
+                  icon: const Icon(Icons.burst_mode_outlined, size: 18),
+                  label: const Text('Generate'),
+                ),
+              ],
+            ),
+            if (loading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (thumbnails.isEmpty)
+              Text(
+                'Extract several frames in one call (getVideoThumbnails).',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: scheme.onSurfaceVariant),
+              )
+            else
+              SizedBox(
+                height: 72,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: thumbnails.length,
+                  separatorBuilder: (BuildContext context, int index) =>
+                      const SizedBox(width: AppSpacing.sm),
+                  itemBuilder: (BuildContext context, int index) => _Thumbnail(
+                    path: thumbnails[index],
+                    width: 108,
+                    height: 72,
+                    borderRadius: 6,
                   ),
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
-      );
-}
-
-/// A centered hint or error message.
-class _Hint extends StatelessWidget {
-  const _Hint(this.text, {this.isError = false});
-
-  final String text;
-  final bool isError;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 24),
-        child: Text(
-          text,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 15,
-            color: isError ? Colors.red : Colors.black45,
-          ),
-        ),
-      );
+      ),
+    );
+  }
 }

@@ -57,104 +57,106 @@ class _VideoPlayerState extends State<VideoPlayerScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(),
-        body: SafeArea(
-          child: _controller.value.isInitialized
-              ? Column(
-                  children: [
-                    // Video occupies all available vertical space.
-                    Expanded(
-                      child: Center(
-                        child: AspectRatio(
-                          aspectRatio: _controller.value.aspectRatio,
-                          child: VideoPlayer(_controller),
-                        ),
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      appBar: AppBar(),
+      body: SafeArea(
+        child: _controller.value.isInitialized
+            ? Column(
+                children: [
+                  // Video occupies all available vertical space.
+                  Expanded(
+                    child: Center(
+                      child: AspectRatio(
+                        aspectRatio: _controller.value.aspectRatio,
+                        child: VideoPlayer(_controller),
                       ),
                     ),
-                    // Playback controls pinned to the bottom.
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 10),
-                      child: Column(
-                        children: [
-                          // Progress slider.
-                          SliderTheme(
-                            data: SliderTheme.of(context).copyWith(
-                              activeTrackColor: Colors.black,
-                              inactiveTrackColor: Colors.black12,
-                              thumbColor: Colors.black,
-                              overlayColor: Colors.black12,
-                              trackHeight: 1,
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 10),
-                              thumbShape: const RoundSliderThumbShape(
-                                  enabledThumbRadius: 6),
-                            ),
-                            child: Slider(
-                              value: _controller.value.position.inSeconds
-                                  .toDouble(),
-                              min: 0,
-                              max: _controller.value.duration.inSeconds
-                                  .toDouble(),
-                              onChanged: (value) => _controller
-                                  .seekTo(Duration(seconds: value.toInt())),
-                            ),
+                  ),
+                  // Playback controls pinned to the bottom.
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 10),
+                    child: Column(
+                      children: [
+                        // Progress slider.
+                        SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            activeTrackColor: scheme.primary,
+                            inactiveTrackColor: scheme.surfaceContainerHighest,
+                            thumbColor: scheme.primary,
+                            overlayColor:
+                                scheme.primary.withValues(alpha: 0.12),
+                            trackHeight: 1,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 10),
+                            thumbShape: const RoundSliderThumbShape(
+                                enabledThumbRadius: 6),
                           ),
-                          // Current position / total duration timestamps.
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(_formatDuration(
-                                    _controller.value.position)),
-                                Text(_formatDuration(
-                                    _controller.value.duration)),
-                              ],
-                            ),
+                          child: Slider(
+                            value:
+                                _controller.value.position.inSeconds.toDouble(),
+                            min: 0,
+                            max:
+                                _controller.value.duration.inSeconds.toDouble(),
+                            onChanged: (value) => _controller
+                                .seekTo(Duration(seconds: value.toInt())),
                           ),
-                          // Rewind, play/pause, and forward buttons.
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                        ),
+                        // Current position / total duration timestamps.
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              IconButton(
-                                iconSize: 36,
-                                icon: const Icon(Icons.replay_10,
-                                    color: Colors.black),
-                                onPressed: () =>
-                                    _seekBy(const Duration(seconds: -10)),
-                              ),
-                              IconButton(
-                                iconSize: 48,
-                                icon: Icon(
-                                  _controller.value.isPlaying
-                                      ? Icons.pause_circle
-                                      : Icons.play_circle,
-                                  color: Colors.black,
-                                ),
-                                onPressed: () => setState(() {
-                                  _controller.value.isPlaying
-                                      ? _controller.pause()
-                                      : _controller.play();
-                                }),
-                              ),
-                              IconButton(
-                                iconSize: 36,
-                                icon: const Icon(Icons.forward_10,
-                                    color: Colors.black),
-                                onPressed: () =>
-                                    _seekBy(const Duration(seconds: 10)),
-                              ),
+                              Text(_formatDuration(_controller.value.position)),
+                              Text(_formatDuration(_controller.value.duration)),
                             ],
                           ),
-                          const SizedBox(height: 16),
-                        ],
-                      ),
+                        ),
+                        // Rewind, play/pause, and forward buttons.
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            IconButton(
+                              iconSize: 36,
+                              icon: Icon(Icons.replay_10,
+                                  color: scheme.onSurface),
+                              onPressed: () =>
+                                  _seekBy(const Duration(seconds: -10)),
+                            ),
+                            IconButton(
+                              iconSize: 48,
+                              icon: Icon(
+                                _controller.value.isPlaying
+                                    ? Icons.pause_circle
+                                    : Icons.play_circle,
+                                color: scheme.onSurface,
+                              ),
+                              onPressed: () => setState(() {
+                                _controller.value.isPlaying
+                                    ? _controller.pause()
+                                    : _controller.play();
+                              }),
+                            ),
+                            IconButton(
+                              iconSize: 36,
+                              icon: Icon(Icons.forward_10,
+                                  color: scheme.onSurface),
+                              onPressed: () =>
+                                  _seekBy(const Duration(seconds: 10)),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                      ],
                     ),
-                  ],
-                )
-              : const Center(child: CircularProgressIndicator()),
-        ),
-      );
+                  ),
+                ],
+              )
+            : const Center(child: CircularProgressIndicator()),
+      ),
+    );
+  }
 }
