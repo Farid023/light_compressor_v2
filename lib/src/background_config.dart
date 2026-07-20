@@ -17,7 +17,9 @@ import 'package:light_compressor_v2/light_compressor_v2.dart';
 /// * **Android** — the compression runs under a *foreground service*, surfaced
 ///   to the user as an ongoing notification that shows live progress (bar +
 ///   percentage), an elapsed-time timer, the current file or batch progress
-///   and a Cancel action. [notificationTitle] sets its
+///   and a Cancel action. Tapping the notification brings the app forward when
+///   the host activity reuses its task (for example, `launchMode="singleTop"`).
+///   [notificationTitle] sets its
 ///   title. This keeps the process at
 ///   foreground priority, so compression continues uninterrupted when the app
 ///   is backgrounded or the screen turns off.

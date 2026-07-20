@@ -219,7 +219,9 @@ Behaviour differs by platform:
 
 - **Android** — runs under a foreground service with an ongoing notification showing
   live progress, elapsed time, the current file (single) or a `done / total` count
-  (batch) and a Cancel action.
+  (batch) and a Cancel action. Tapping the notification brings the app forward;
+  keep the host activity task-reusing (for example, `launchMode="singleTop"`) to
+  preserve the existing Flutter engine/state.
 - **macOS** — suppresses App Nap so the process keeps full CPU in the background;
   the notification fields are ignored.
 - **iOS** — **not supported.** iOS suspends backgrounded apps within seconds, so a
@@ -538,7 +540,7 @@ Re-encodes the audio track as AAC. Passed as `audio:` to `compressVideo` / `comp
 
 ### `BackgroundConfig`
 
-Opt into background execution. `notificationTitle` is the Android foreground-service notification title; iOS and macOS ignore it.
+Opt into background execution. `notificationTitle` is the Android foreground-service notification title; tapping that notification brings the app forward when the host activity reuses its task (for example, `launchMode="singleTop"`). iOS and macOS ignore it.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|

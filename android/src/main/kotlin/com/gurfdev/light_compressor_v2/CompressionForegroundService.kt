@@ -132,8 +132,9 @@ class CompressionForegroundService : Service() {
         /**
          * Builds the ongoing notification. A null [percent] renders an
          * indeterminate bar; a value renders a determinate `0..100` bar plus a
-         * percentage sub-text. Always includes an elapsed-time chronometer and
-         * a Cancel action.
+         * percentage sub-text. Tapping the notification brings the host app
+         * forward when Android can resolve its launcher activity. Always
+         * includes an elapsed-time chronometer and a Cancel action.
          */
         private fun buildNotification(
             context: Context,
@@ -157,6 +158,7 @@ class CompressionForegroundService : Service() {
                     context.getString(android.R.string.cancel),
                     cancelIntent(context),
                 )
+            openAppIntent(context)?.let { builder.setContentIntent(it) }
             if (percent == null) {
                 builder.setProgress(0, 0, true)
             } else {
@@ -178,6 +180,17 @@ class CompressionForegroundService : Service() {
         private fun cancelIntent(context: Context): PendingIntent {
             val intent = Intent(context, CompressionCancelReceiver::class.java)
             return PendingIntent.getBroadcast(context, 1, intent, pendingFlags())
+        }
+
+        /** Notification tap brings the existing task forward when possible. */
+        private fun openAppIntent(context: Context): PendingIntent? {
+            val intent = context.packageManager
+                .getLaunchIntentForPackage(context.packageName)
+                ?.apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                }
+                ?: return null
+            return PendingIntent.getActivity(context, 0, intent, pendingFlags())
         }
 
         private fun createChannelIfNeeded(context: Context) {
