@@ -1,6 +1,10 @@
 # Changelog
 
-# 1.8.3
+# 1.9.0
+
+### New
+
+- **Tap the foreground notification to reopen the app (Android, [#16](https://github.com/Farid023/light_compressor_v2/issues/16)):** the ongoing compression notification now carries a content intent, so tapping it brings the running app forward (`FLAG_ACTIVITY_REORDER_TO_FRONT`). With a task-reusing host activity (Flutter's default `launchMode="singleTop"`) the existing Flutter state is kept; after a full process kill it cold-starts. Thanks [@khlebobul](https://github.com/khlebobul) ([#18](https://github.com/Farid023/light_compressor_v2/pull/18)).
 
 ### Fixed
 
