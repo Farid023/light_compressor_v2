@@ -207,4 +207,35 @@ void main() {
       timeout: const Timeout(Duration(seconds: 120)),
     );
   });
+
+  group('audio passthrough mux (issue #17)', () {
+    testWidgets(
+      'default compression of an audio-bearing clip does not crash the writer',
+      (WidgetTester tester) async {
+        if (source == null) return markTestSkipped(kNoClipSkipReason);
+
+        // Regression guard for issue #17. With NO AudioConfig (the default), the
+        // source audio is muxed through untouched. The native writer needs the
+        // source format description to do that; without it, AVAssetWriter's
+        // addInput throws NSInvalidArgumentException ("provide a format hint")
+        // on a REAL iOS device. The simulator and macOS are lenient, so this
+        // stays green there whether or not the fix is present — its value is on
+        // physical iOS hardware / CI-on-device.
+        final Result result = await compressor.compressVideo(
+          path: source!,
+          videoQuality: VideoQuality.medium,
+          isMinBitrateCheckEnabled: false,
+          video: Video(videoName: 'lc_edge_audiopass'),
+          android: AndroidConfig(isSharedStorage: false),
+          ios: IOSConfig(saveInGallery: false),
+        );
+
+        expect(result, isA<OnSuccess>(),
+            reason: 'passthrough audio compression must not crash or fail');
+        await expectReadableVideo(
+            compressor, (result as OnSuccess).destinationPath);
+      },
+      timeout: const Timeout(Duration(seconds: 120)),
+    );
+  });
 }

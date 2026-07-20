@@ -877,7 +877,21 @@ public struct LightCompressor {
                 // The reader must decompress to PCM so the writer can re-encode.
                 readerSettings = [AVFormatIDKey: Int(kAudioFormatLinearPCM)]
             }
-            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: writerSettings)
+            let input: AVAssetWriterInput
+            if let writerSettings {
+                input = AVAssetWriterInput(
+                    mediaType: .audio, outputSettings: writerSettings)
+            } else {
+                // Passthrough mux: AVAssetWriter needs the source format
+                // description to write the original audio samples into the .mp4
+                // container. Without it, add(_:) throws NSInvalidArgumentException
+                // ("provide a format hint") on a real device (issue #17); the
+                // simulator is lenient, which is why it slipped past sim runs.
+                let hint = (audioTrack.formatDescriptions as? [CMFormatDescription])?
+                    .first
+                input = AVAssetWriterInput(
+                    mediaType: .audio, outputSettings: nil, sourceFormatHint: hint)
+            }
             input.expectsMediaDataInRealTime = false
             videoWriter.add(input)
             audioWriterInput = input

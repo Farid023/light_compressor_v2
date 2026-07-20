@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **iOS/macOS crash when compressing videos that have audio ([#17](https://github.com/Farid023/light_compressor_v2/issues/17)):** with no `AudioConfig` (the default), the source audio is muxed through unchanged. The native audio writer input was created without the source format description, which made `AVAssetWriter` throw `NSInvalidArgumentException` ("provide a format hint") on a **physical iOS device** — reproducing 100% on `.mov` camera recordings (they always carry an audio track). The input now carries the source `CMFormatDescription`, so passthrough muxing to the `.mp4` container succeeds. The simulator and macOS did not surface the crash, which is why it slipped past.
 - **Batch progress bounds:** `BatchProgress.percent` and `overallPercent` are now clamped to `0..100`, matching single-video progress — a native value that rounds just over `100` (or a transient negative) no longer leaks into batch progress UIs.
 
 # 1.8.2
