@@ -1,5 +1,16 @@
 # Changelog
 
+# 1.9.0
+
+### New
+
+- **Tap the foreground notification to reopen the app (Android, [#16](https://github.com/Farid023/light_compressor_v2/issues/16)):** the ongoing compression notification now carries a content intent, so tapping it brings the running app forward (`FLAG_ACTIVITY_REORDER_TO_FRONT`). With a task-reusing host activity (Flutter's default `launchMode="singleTop"`) the existing Flutter state is kept; after a full process kill it cold-starts. Thanks [@khlebobul](https://github.com/khlebobul) ([#18](https://github.com/Farid023/light_compressor_v2/pull/18)).
+
+### Fixed
+
+- **iOS/macOS crash when compressing videos that have audio ([#17](https://github.com/Farid023/light_compressor_v2/issues/17)):** with no `AudioConfig` (the default), the source audio is muxed through unchanged. The native audio writer input was created without the source format description, which made `AVAssetWriter` throw `NSInvalidArgumentException` ("provide a format hint") on a **physical iOS device** — reproducing 100% on `.mov` camera recordings (they always carry an audio track). The input now carries the source `CMFormatDescription`, so passthrough muxing to the `.mp4` container succeeds. The simulator and macOS did not surface the crash, which is why it slipped past.
+- **Batch progress bounds:** `BatchProgress.percent` and `overallPercent` are now clamped to `0..100`, matching single-video progress — a native value that rounds just over `100` (or a transient negative) no longer leaks into batch progress UIs.
+
 # 1.8.2
 
 ### Changed

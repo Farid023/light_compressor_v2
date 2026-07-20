@@ -99,8 +99,12 @@ class LightCompressor {
         final int? eta = (map['etaMs'] as num?)?.toInt();
         return BatchProgress(
           index: index,
-          percent: (map['percent'] as num?)?.toDouble() ?? 0.0,
-          overallPercent: (map['overallPercent'] as num?)?.toDouble() ?? 0.0,
+          percent: ((map['percent'] as num?)?.toDouble() ?? 0.0)
+              .clamp(0.0, 100.0)
+              .toDouble(),
+          overallPercent: ((map['overallPercent'] as num?)?.toDouble() ?? 0.0)
+              .clamp(0.0, 100.0)
+              .toDouble(),
           bytesProcessed: (map['bytesProcessed'] as num?)?.toInt(),
           etaMs: (eta == null || eta < 0) ? null : eta,
           elapsedMs: (map['elapsedMs'] as num?)?.toInt(),
