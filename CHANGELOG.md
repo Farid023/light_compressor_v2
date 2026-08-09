@@ -1,5 +1,15 @@
 # Changelog
 
+# 1.9.1
+
+### Fixed
+
+- **iOS/macOS: a compression could end with no result at all** — no success, no failure, no crash — leaving the caller waiting forever. The encode loop now always ends a pass exactly once: a drained or failed reader is handled explicitly, the file is closed only once, and cancellation is honoured while the audio track is being written.
+
+### Internal
+
+- **Audio is now covered by the integration tests.** The bundled sample clip had no audio track, so the Apple audio path (passthrough and AAC re-encode) was never exercised. Added a clip with audio and tests for both.
+
 # 1.9.0
 
 ### New

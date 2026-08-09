@@ -909,6 +909,39 @@ public struct LightCompressor {
         var isFirstBuffer = true
         let processingQueue = DispatchQueue(label: "processingQueue1", qos: .background)
 
+        // A pass must report exactly once, and `finishWriting` must be called
+        // exactly once (a second call throws). The video-only path, the audio
+        // mux path and cancellation all funnel through these two, so no
+        // interleaving of them can double-reply or double-close the file.
+        let terminalLock = NSLock()
+        var didReply = false
+        var didFinish = false
+        let replyOnce: (PassOutcome) -> Void = { outcome in
+            terminalLock.lock()
+            let isFirst = !didReply
+            didReply = true
+            terminalLock.unlock()
+            if isFirst { onPassComplete(outcome) }
+        }
+        let finishWritingOnce: () -> Void = {
+            terminalLock.lock()
+            let isFirst = !didFinish
+            didFinish = true
+            terminalLock.unlock()
+            guard isFirst else { return }
+            videoWriter.finishWriting {
+                DispatchQueue.main.async {
+                    if videoWriter.status == .completed {
+                        replyOnce(.success(destination))
+                    } else {
+                        replyOnce(.failure(CompressionError(
+                            title: videoWriter.error?.localizedDescription
+                                ?? "Video writing failed")))
+                    }
+                }
+            }
+        }
+
         videoWriterInput.requestMediaDataWhenReady(on: processingQueue) {
             while videoWriterInput.isReadyForMoreMediaData {
 
@@ -916,7 +949,7 @@ public struct LightCompressor {
                 if compressionOperation.cancel {
                     videoReader.cancelReading()
                     videoWriter.cancelWriting()
-                    onPassComplete(.cancelled)
+                    replyOnce(.cancelled)
                     return
                 }
 
@@ -944,7 +977,7 @@ public struct LightCompressor {
 
                 let sampleBuffer = videoReaderOutput.copyNextSampleBuffer()
 
-                if videoReader.status == .reading, let sampleBuffer {
+                if let sampleBuffer, videoReader.status != .failed {
                     // Frame-rate downsampling (8b): append the frame only once
                     // its timestamp reaches the next emit point; otherwise drop
                     // it (don't append) so it never reaches the encoder.
@@ -954,67 +987,76 @@ public struct LightCompressor {
                         videoWriterInput.append(sampleBuffer)
                     }
                 } else {
+                    // Terminal for the video phase. EVERY path below returns:
+                    // falling through would re-enter the loop with the audio
+                    // reader already reading, close the writer while its audio
+                    // input is still unfinished, and never complete — a silent
+                    // hang with no result delivered to the caller.
                     videoWriterInput.markAsFinished()
 
-                    guard videoReader.status == .completed else { return }
+                    if videoReader.status == .failed {
+                        // Surface the error instead of returning quietly, which
+                        // would leave the caller waiting forever.
+                        videoReader.cancelReading()
+                        videoWriter.cancelWriting()
+                        replyOnce(.failure(CompressionError(
+                            title: videoReader.error?.localizedDescription
+                                ?? "Video reading failed")))
+                        return
+                    }
 
-                    if let audioReader, let audioReaderOutput, let audioWriterInput,
-                       audioReader.status != .reading, audioReader.status != .completed {
+                    guard let audioReader, let audioReaderOutput,
+                          let audioWriterInput else {
+                        finishWritingOnce()
+                        return
+                    }
 
-                        audioReader.startReading()
-                        videoWriter.startSession(atSourceTime: trimRange?.start ?? .zero)
+                    // The writing session is already open (startSession above);
+                    // opening a second one here would begin another segment.
+                    audioReader.startReading()
 
-                        let audioQueue = DispatchQueue(label: "processingQueue2", qos: .background)
-                        audioWriterInput.requestMediaDataWhenReady(on: audioQueue) {
-                            while audioWriterInput.isReadyForMoreMediaData {
-                                let audioBuffer = audioReaderOutput.copyNextSampleBuffer()
-
-                                if audioReader.status == .reading, let audioBuffer {
-                                    if isFirstBuffer {
-                                        // AAC passthrough: trim the encoder
-                                        // priming samples at the start. When
-                                        // re-encoding, the writer's encoder
-                                        // handles priming itself.
-                                        if !reEncodeAudio {
-                                            let dict = CMTimeCopyAsDictionary(
-                                                CMTimeMake(value: 1024, timescale: 44100),
-                                                allocator: kCFAllocatorDefault)
-                                            CMSetAttachment(
-                                                audioBuffer as CMAttachmentBearer,
-                                                key: kCMSampleBufferAttachmentKey_TrimDurationAtStart,
-                                                value: dict,
-                                                attachmentMode: kCMAttachmentMode_ShouldNotPropagate)
-                                        }
-                                        isFirstBuffer = false
-                                    }
-                                    audioWriterInput.append(audioBuffer)
-                                } else {
-                                    audioWriterInput.markAsFinished()
-                                    videoWriter.finishWriting {
-                                        DispatchQueue.main.async {
-                                            if videoWriter.status == .completed {
-                                                onPassComplete(.success(destination))
-                                            } else {
-                                                onPassComplete(.failure(CompressionError(
-                                                    title: videoWriter.error?.localizedDescription ?? "Video writing failed")))
-                                            }
-                                        }
-                                    }
-                                }
+                    let audioQueue = DispatchQueue(label: "processingQueue2", qos: .background)
+                    audioWriterInput.requestMediaDataWhenReady(on: audioQueue) {
+                        while audioWriterInput.isReadyForMoreMediaData {
+                            if compressionOperation.cancel {
+                                audioReader.cancelReading()
+                                videoWriter.cancelWriting()
+                                replyOnce(.cancelled)
+                                return
                             }
-                        }
-                    } else {
-                        videoWriter.finishWriting {
-                            DispatchQueue.main.async {
-                                if videoWriter.status == .completed {
-                                    onPassComplete(.success(destination))
-                                } else {
-                                    onPassComplete(.failure(CompressionError(
-                                        title: videoWriter.error?.localizedDescription ?? "Video writing failed")))
-                                }
+
+                            let audioBuffer = audioReaderOutput.copyNextSampleBuffer()
+
+                            guard let audioBuffer, audioReader.status != .failed else {
+                                // Audio drained (or the reader stopped): close
+                                // the file once and return — re-entering would
+                                // mark a finished input finished again.
+                                audioWriterInput.markAsFinished()
+                                finishWritingOnce()
+                                return
                             }
+
+                            if isFirstBuffer {
+                                // AAC passthrough: trim the encoder
+                                // priming samples at the start. When
+                                // re-encoding, the writer's encoder
+                                // handles priming itself.
+                                if !reEncodeAudio {
+                                    let dict = CMTimeCopyAsDictionary(
+                                        CMTimeMake(value: 1024, timescale: 44100),
+                                        allocator: kCFAllocatorDefault)
+                                    CMSetAttachment(
+                                        audioBuffer as CMAttachmentBearer,
+                                        key: kCMSampleBufferAttachmentKey_TrimDurationAtStart,
+                                        value: dict,
+                                        attachmentMode: kCMAttachmentMode_ShouldNotPropagate)
+                                }
+                                isFirstBuffer = false
+                            }
+                            audioWriterInput.append(audioBuffer)
                         }
                     }
+                    return
                 }
             }
         }
