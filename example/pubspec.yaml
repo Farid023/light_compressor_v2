@@ -68,10 +68,12 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # Sample clip used by the HEVC integration tests (replace the placeholder with
-  # a real short .mp4 to enable them).
+  # Sample clips used by the integration tests (replace a placeholder with a
+  # real short .mp4 to enable them). sample.mp4 is video-only; sample_audio.mp4
+  # carries an AAC track, which is what exercises the native audio mux.
   assets:
     - integration_test/assets/sample.mp4
+    - integration_test/assets/sample_audio.mp4
 
   # To add assets to your application, add an assets section, like this:
   # assets:

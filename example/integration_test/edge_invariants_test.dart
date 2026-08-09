@@ -28,9 +28,11 @@ void main() {
 
   final LightCompressor compressor = LightCompressor();
   String? source;
+  String? audioSource;
 
   setUpAll(() async {
     source = await prepareSampleSource();
+    audioSource = await prepareAudioSampleSource();
   });
 
   group('batch invariants (real device)', () {
@@ -208,21 +210,26 @@ void main() {
     );
   });
 
-  group('audio passthrough mux (issue #17)', () {
+  // These MUST run against a clip that actually carries an audio track: with a
+  // video-only source the natives never build an audio writer input, so the
+  // whole mux path — and the #17 crash with it — goes untested (which is how
+  // #17 shipped in the first place).
+  group('audio mux (issue #17)', () {
     testWidgets(
-      'default compression of an audio-bearing clip does not crash the writer',
+      'passthrough audio: default compression does not crash the writer',
       (WidgetTester tester) async {
-        if (source == null) return markTestSkipped(kNoClipSkipReason);
+        if (audioSource == null) {
+          return markTestSkipped(kNoAudioClipSkipReason);
+        }
 
-        // Regression guard for issue #17. With NO AudioConfig (the default), the
-        // source audio is muxed through untouched. The native writer needs the
-        // source format description to do that; without it, AVAssetWriter's
+        // Regression guard for issue #17. With NO AudioConfig (the default),
+        // the source audio is muxed through untouched. The native writer needs
+        // the source format description to do that; without it, AVAssetWriter's
         // addInput throws NSInvalidArgumentException ("provide a format hint")
         // on a REAL iOS device. The simulator and macOS are lenient, so this
-        // stays green there whether or not the fix is present — its value is on
-        // physical iOS hardware / CI-on-device.
+        // only fails on physical iOS hardware.
         final Result result = await compressor.compressVideo(
-          path: source!,
+          path: audioSource!,
           videoQuality: VideoQuality.medium,
           isMinBitrateCheckEnabled: false,
           video: Video(videoName: 'lc_edge_audiopass'),
@@ -232,6 +239,33 @@ void main() {
 
         expect(result, isA<OnSuccess>(),
             reason: 'passthrough audio compression must not crash or fail');
+        await expectReadableVideo(
+            compressor, (result as OnSuccess).destinationPath);
+      },
+      timeout: const Timeout(Duration(seconds: 120)),
+    );
+
+    testWidgets(
+      're-encoded audio: an AudioConfig run also completes',
+      (WidgetTester tester) async {
+        if (audioSource == null) {
+          return markTestSkipped(kNoAudioClipSkipReason);
+        }
+
+        // The other half of the mux path: an AudioConfig makes the natives
+        // decode and re-encode to AAC instead of copying samples through.
+        final Result result = await compressor.compressVideo(
+          path: audioSource!,
+          videoQuality: VideoQuality.medium,
+          isMinBitrateCheckEnabled: false,
+          video: Video(videoName: 'lc_edge_audioreenc'),
+          android: AndroidConfig(isSharedStorage: false),
+          ios: IOSConfig(saveInGallery: false),
+          audio: AudioConfig(bitrate: 96000, sampleRate: 44100),
+        );
+
+        expect(result, isA<OnSuccess>(),
+            reason: 'audio re-encode must not crash or stall');
         await expectReadableVideo(
             compressor, (result as OnSuccess).destinationPath);
       },

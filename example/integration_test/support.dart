@@ -8,8 +8,18 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:light_compressor_v2/light_compressor_v2.dart';
 
-/// Pubspec-relative key of the bundled sample clip.
+/// Pubspec-relative key of the bundled sample clip. Video-only — it has **no
+/// audio track**, so it does not exercise the native audio mux.
 const String kSampleAssetKey = 'integration_test/assets/sample.mp4';
+
+/// Pubspec-relative key of the bundled clip that carries an AAC audio track.
+/// Required by anything covering the audio path (passthrough mux or re-encode).
+const String kAudioSampleAssetKey = 'integration_test/assets/sample_audio.mp4';
+
+/// Reason shown when the audio-bearing clip is missing and a test skips.
+const String kNoAudioClipSkipReason =
+    'Add a real clip WITH an audio track at example/$kAudioSampleAssetKey to '
+    'run this test.';
 
 /// Anything smaller than this is treated as the committed placeholder.
 const int _minRealClipBytes = 5000;
@@ -20,10 +30,17 @@ const String kNoClipSkipReason =
 
 /// Copies the bundled sample clip to a temp file and returns its path, or null
 /// when the asset is still the placeholder (so callers can skip cleanly).
-Future<String?> prepareSampleSource() async {
+Future<String?> prepareSampleSource() =>
+    _prepareAsset(kSampleAssetKey, 'source.mp4');
+
+/// Same as [prepareSampleSource] for the clip that carries an audio track.
+Future<String?> prepareAudioSampleSource() =>
+    _prepareAsset(kAudioSampleAssetKey, 'source_audio.mp4');
+
+Future<String?> _prepareAsset(String assetKey, String fileName) async {
   final ByteData data;
   try {
-    data = await rootBundle.load(kSampleAssetKey);
+    data = await rootBundle.load(assetKey);
   } catch (_) {
     // Asset not bundled (e.g. placeholder removed) — let the caller skip.
     return null;
@@ -35,7 +52,7 @@ Future<String?> prepareSampleSource() async {
   // source mid-suite (e.g. before the cancellation test).
   final Directory dir = Directory('${Directory.systemTemp.path}/lc_it_fixtures')
     ..createSync(recursive: true);
-  final File file = File('${dir.path}/source.mp4');
+  final File file = File('${dir.path}/$fileName');
   await file.writeAsBytes(bytes, flush: true);
   return file.path;
 }
